@@ -172,6 +172,21 @@ export default function GeofencesPage() {
     },
   });
 
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: typeof formData }) => {
+      return apiRequest("PATCH", `/api/geofences/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/geofences"] });
+      toast({ title: "Geofence atualizada", description: "A geofence foi atualizada com sucesso." });
+      setEditingGeofence(null);
+      resetForm();
+    },
+    onError: () => {
+      toast({ title: "Erro", description: "Não foi possível atualizar a geofence.", variant: "destructive" });
+    },
+  });
+
   const resetForm = () => {
     setFormData({
       name: "",
@@ -204,6 +219,42 @@ export default function GeofencesPage() {
       return;
     }
     createMutation.mutate(formData);
+  };
+
+  const handleEditSubmit = () => {
+    if (!editingGeofence) return;
+    if (!formData.name) {
+      toast({ title: "Erro", description: "Digite um nome para a geofence.", variant: "destructive" });
+      return;
+    }
+    if (formData.type === "circle" && !formData.center) {
+      toast({ title: "Erro", description: "Clique no mapa para definir o centro da área.", variant: "destructive" });
+      return;
+    }
+    if (formData.type === "polygon" && formData.points.length < 3) {
+      toast({ title: "Erro", description: "Desenhe ao menos 3 pontos para formar um polígono.", variant: "destructive" });
+      return;
+    }
+    updateMutation.mutate({ id: editingGeofence.id, data: formData });
+  };
+
+  const openEditDialog = (geofence: Geofence) => {
+    setFormData({
+      name: geofence.name,
+      description: geofence.description || "",
+      type: geofence.type,
+      active: geofence.active,
+      center: geofence.center || undefined,
+      radius: geofence.radius || 500,
+      points: geofence.points || [],
+      rules: geofence.rules.length > 0 ? geofence.rules : [
+        { type: "entry", enabled: true, toleranceSeconds: 30 },
+        { type: "exit", enabled: true, toleranceSeconds: 30 },
+        { type: "dwell", enabled: false, dwellTimeMinutes: 30, toleranceSeconds: 30 },
+      ],
+      vehicleIds: geofence.vehicleIds || [],
+    });
+    setEditingGeofence(geofence);
   };
 
   const formatDate = (dateString: string | undefined) => {
@@ -296,7 +347,7 @@ export default function GeofencesPage() {
                         className="h-8"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setEditingGeofence(geofence);
+                          openEditDialog(geofence);
                         }}
                         data-testid={`edit-${geofence.id}`}
                       >
@@ -573,6 +624,188 @@ export default function GeofencesPage() {
             </Button>
             <Button onClick={handleSubmit} disabled={createMutation.isPending} data-testid="button-save-geofence">
               {createMutation.isPending ? "Salvando..." : "Salvar Geofence"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog de Edição */}
+      <Dialog open={!!editingGeofence} onOpenChange={(open) => { if (!open) { setEditingGeofence(null); resetForm(); } }}>
+        <DialogContent className="max-w-4xl h-[90vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Editar Geofence</DialogTitle>
+          </DialogHeader>
+          
+          <div className="flex-1 flex gap-4 min-h-0">
+            <div className="w-[300px] flex-shrink-0 space-y-4 overflow-y-auto pr-2">
+              <div className="space-y-2">
+                <Label htmlFor="edit-name">Nome</Label>
+                <Input
+                  id="edit-name"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="Ex: Depósito Central"
+                  data-testid="input-edit-geofence-name"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="edit-description">Descrição</Label>
+                <Textarea
+                  id="edit-description"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Descrição opcional"
+                  rows={2}
+                  data-testid="input-edit-geofence-description"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Tipo de Área</Label>
+                <Tabs value={formData.type} onValueChange={(v) => setFormData({ ...formData, type: v as "circle" | "polygon", center: undefined, points: [] })}>
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="circle" className="gap-2">
+                      <CircleIcon className="h-4 w-4" />
+                      Círculo
+                    </TabsTrigger>
+                    <TabsTrigger value="polygon" className="gap-2">
+                      <Pentagon className="h-4 w-4" />
+                      Polígono
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+              
+              {formData.type === "circle" && (
+                <div className="space-y-2">
+                  <Label htmlFor="edit-radius">Raio (metros)</Label>
+                  <Input
+                    id="edit-radius"
+                    type="number"
+                    value={formData.radius}
+                    onChange={(e) => setFormData({ ...formData, radius: parseInt(e.target.value) || 500 })}
+                    min={50}
+                    max={10000}
+                    data-testid="input-edit-radius"
+                  />
+                </div>
+              )}
+              
+              <div className="space-y-3">
+                <Label>Regras de Alerta</Label>
+                
+                <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-green-500" />
+                    <span className="text-sm">Alertar entrada</span>
+                  </div>
+                  <Switch
+                    checked={formData.rules.find(r => r.type === "entry")?.enabled || false}
+                    onCheckedChange={(checked) => {
+                      setFormData({
+                        ...formData,
+                        rules: formData.rules.map(r => r.type === "entry" ? { ...r, enabled: checked } : r),
+                      });
+                    }}
+                    data-testid="switch-edit-entry"
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-red-500" />
+                    <span className="text-sm">Alertar saída</span>
+                  </div>
+                  <Switch
+                    checked={formData.rules.find(r => r.type === "exit")?.enabled || false}
+                    onCheckedChange={(checked) => {
+                      setFormData({
+                        ...formData,
+                        rules: formData.rules.map(r => r.type === "exit" ? { ...r, enabled: checked } : r),
+                      });
+                    }}
+                    data-testid="switch-edit-exit"
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-4 w-4 text-amber-500" />
+                    <span className="text-sm">Permanência prolongada</span>
+                  </div>
+                  <Switch
+                    checked={formData.rules.find(r => r.type === "dwell")?.enabled || false}
+                    onCheckedChange={(checked) => {
+                      setFormData({
+                        ...formData,
+                        rules: formData.rules.map(r => r.type === "dwell" ? { ...r, enabled: checked } : r),
+                      });
+                    }}
+                    data-testid="switch-edit-dwell"
+                  />
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="edit-tolerance">Tolerância (segundos)</Label>
+                <Input
+                  id="edit-tolerance"
+                  type="number"
+                  value={formData.rules[0]?.toleranceSeconds || 30}
+                  onChange={(e) => {
+                    const tolerance = parseInt(e.target.value) || 30;
+                    setFormData({
+                      ...formData,
+                      rules: formData.rules.map(r => ({ ...r, toleranceSeconds: tolerance })),
+                    });
+                  }}
+                  min={0}
+                  max={300}
+                  data-testid="input-edit-tolerance"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Ignora entradas/saídas que durarem menos que este tempo
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex-1 rounded-lg overflow-hidden border">
+              <MapContainer
+                center={formData.center ? [formData.center.latitude, formData.center.longitude] : [-23.5505, -46.6333]}
+                zoom={13}
+                className="h-full w-full"
+                zoomControl={true}
+                key={editingGeofence?.id}
+              >
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+                <DrawingMap
+                  type={formData.type}
+                  center={formData.center}
+                  radius={formData.radius}
+                  points={formData.points}
+                  onCenterChange={(center) => setFormData({ ...formData, center })}
+                  onRadiusChange={(radius) => setFormData({ ...formData, radius })}
+                  onPointsChange={(points) => setFormData({ ...formData, points })}
+                />
+              </MapContainer>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <p className="text-xs text-muted-foreground mr-auto">
+              {formData.type === "circle" 
+                ? "Clique no mapa para redefinir o centro da área circular"
+                : "Clique no mapa para adicionar pontos do polígono"}
+            </p>
+            <Button variant="outline" onClick={() => { setEditingGeofence(null); resetForm(); }}>
+              Cancelar
+            </Button>
+            <Button onClick={handleEditSubmit} disabled={updateMutation.isPending} data-testid="button-update-geofence">
+              {updateMutation.isPending ? "Salvando..." : "Salvar Alterações"}
             </Button>
           </DialogFooter>
         </DialogContent>
