@@ -608,4 +608,27 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// Exporta SupabaseStorage se configurado, senão MemStorage para desenvolvimento
+async function createStorage(): Promise<IStorage> {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (supabaseUrl && supabaseKey) {
+    console.log('🚀 Using Supabase storage');
+    // Dynamic import para evitar erro quando Supabase não está configurado
+    const { SupabaseStorage } = await import('./supabase-storage');
+    return new SupabaseStorage();
+  }
+  
+  console.log('📦 Using in-memory storage (Supabase not configured)');
+  return new MemStorage();
+}
+
+// Inicializa o storage de forma assíncrona
+let storage: IStorage;
+
+const initPromise = createStorage().then(s => {
+  storage = s;
+});
+
+export { storage, initPromise };

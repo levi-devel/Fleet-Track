@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { VehicleList } from "@/components/vehicle-list";
 import { VehicleDetailPanel } from "@/components/vehicle-detail-panel";
 import { FleetMap } from "@/components/fleet-map";
-import { useVehicleWebSocket } from "@/hooks/use-websocket";
+import { useVehicleUpdates, useAlertsRealtime } from "@/hooks/use-websocket";
 import type { Vehicle, Alert, Geofence } from "@shared/schema";
 
 export default function Dashboard() {
@@ -11,7 +11,9 @@ export default function Dashboard() {
   const [followVehicle, setFollowVehicle] = useState<Vehicle | undefined>();
   const [recentTrail, setRecentTrail] = useState<{ latitude: number; longitude: number }[]>([]);
 
-  useVehicleWebSocket();
+  // Usa Supabase Realtime se configurado, senão WebSocket
+  useVehicleUpdates();
+  useAlertsRealtime();
 
   const { data: vehicles = [], isLoading: isLoadingVehicles } = useQuery<Vehicle[]>({
     queryKey: ["/api/vehicles"],

@@ -1,5 +1,9 @@
+// Carrega variáveis de ambiente PRIMEIRO (antes de qualquer outro import)
+import 'dotenv/config';
+
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { registerAuthRoutes } from "./auth-routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
@@ -60,6 +64,16 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Aguarda inicialização do storage
+  const { initPromise } = await import('./storage');
+  await initPromise;
+  
+  // Registra rotas de autenticação (apenas se Supabase configurado)
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    registerAuthRoutes(app);
+    log('Auth routes registered (Supabase configured)');
+  }
+  
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
