@@ -337,7 +337,7 @@ export default function GeofencesPage() {
                       <span>•</span>
                       <span>{geofence.vehicleIds.length} veículos</span>
                       <span>•</span>
-                      <span>Último: {formatDate(geofence.lastTriggered)}</span>
+                      <span>Último: {formatDate(geofence.lastTriggered ?? undefined)}</span>
                     </div>
                     
                     <div className="flex items-center gap-2 mt-3">

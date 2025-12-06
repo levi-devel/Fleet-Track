@@ -1,10 +1,24 @@
 import { randomUUID } from "crypto";
+import { eq, and, gte, lte, desc, sql } from "drizzle-orm";
+import { getDb, isDatabaseConfigured, type DrizzleClient } from "./db";
+import {
+  vehicles,
+  geofences,
+  alerts,
+  trips,
+  locationPoints,
+  routeEvents,
+  speedViolations,
+} from "@shared/schema";
 import type { 
   Vehicle, InsertVehicle,
   Geofence, InsertGeofence,
   Alert, InsertAlert,
-  Trip, SpeedViolation, VehicleStats
+  Trip, SpeedViolation, VehicleStats,
+  LocationPoint, RouteEvent, GeofenceRule
 } from "@shared/schema";
+
+type VehicleUpdateCallback = (vehicles: Vehicle[]) => void;
 
 export interface IStorage {
   getVehicles(): Promise<Vehicle[]>;
@@ -30,7 +44,462 @@ export interface IStorage {
   
   getSpeedViolations(startDate: string, endDate: string): Promise<SpeedViolation[]>;
   getSpeedStats(startDate: string, endDate: string): Promise<VehicleStats>;
+  
+  // Callback para atualizações de veículos em tempo real
+  onVehicleUpdate(callback: VehicleUpdateCallback): () => void;
 }
+
+// ============================================
+// SUPABASE STORAGE (PostgreSQL via Drizzle)
+// ============================================
+
+export class SupabaseStorage implements IStorage {
+  private db: DrizzleClient;
+  private updateCallbacks: Set<VehicleUpdateCallback> = new Set();
+  private simulationInterval: ReturnType<typeof setInterval> | null = null;
+
+  constructor() {
+    this.db = getDb();
+    // Inicia simulação para demonstração (remover em produção)
+    this.startSimulation();
+  }
+
+  onVehicleUpdate(callback: VehicleUpdateCallback): () => void {
+    this.updateCallbacks.add(callback);
+    return () => this.updateCallbacks.delete(callback);
+  }
+
+  private async notifyVehicleUpdate() {
+    const vehiclesList = await this.getVehicles();
+    this.updateCallbacks.forEach(cb => cb(vehiclesList));
+  }
+
+  private startSimulation() {
+    this.simulationInterval = setInterval(async () => {
+      try {
+        const vehiclesList = await this.getVehicles();
+        for (const vehicle of vehiclesList) {
+          if (vehicle.status === "moving") {
+            const speedChange = (Math.random() - 0.5) * 10;
+            const newSpeed = Math.max(0, Math.min(120, vehicle.currentSpeed + speedChange));
+            
+            const latChange = (Math.random() - 0.5) * 0.002;
+            const lngChange = (Math.random() - 0.5) * 0.002;
+            
+            const headingChange = (Math.random() - 0.5) * 30;
+            const newHeading = (vehicle.heading + headingChange + 360) % 360;
+            
+            await this.updateVehicle(vehicle.id, {
+              currentSpeed: Math.round(newSpeed),
+              heading: Math.round(newHeading),
+              latitude: vehicle.latitude + latChange,
+              longitude: vehicle.longitude + lngChange,
+              lastUpdate: new Date().toISOString(),
+            });
+          }
+        }
+        await this.notifyVehicleUpdate();
+      } catch (error) {
+        console.error("Erro na simulação:", error);
+      }
+    }, 3000);
+  }
+
+  // ============================================
+  // VEHICLES
+  // ============================================
+
+  async getVehicles(): Promise<Vehicle[]> {
+    const result = await this.db.select().from(vehicles);
+    return result.map(this.mapVehicleFromDb);
+  }
+
+  async getVehicle(id: string): Promise<Vehicle | undefined> {
+    const result = await this.db.select().from(vehicles).where(eq(vehicles.id, id));
+    return result[0] ? this.mapVehicleFromDb(result[0]) : undefined;
+  }
+
+  async createVehicle(vehicle: InsertVehicle): Promise<Vehicle> {
+    const result = await this.db.insert(vehicles).values({
+      name: vehicle.name,
+      licensePlate: vehicle.licensePlate,
+      model: vehicle.model,
+      status: vehicle.status,
+      ignition: vehicle.ignition,
+      currentSpeed: vehicle.currentSpeed,
+      speedLimit: vehicle.speedLimit,
+      heading: vehicle.heading,
+      latitude: vehicle.latitude,
+      longitude: vehicle.longitude,
+      accuracy: vehicle.accuracy,
+      lastUpdate: new Date(vehicle.lastUpdate),
+      batteryLevel: vehicle.batteryLevel,
+    }).returning();
+    
+    await this.notifyVehicleUpdate();
+    return this.mapVehicleFromDb(result[0]);
+  }
+
+  async updateVehicle(id: string, updates: Partial<Vehicle>): Promise<Vehicle | undefined> {
+    const updateData: Record<string, unknown> = { updatedAt: new Date() };
+    
+    if (updates.name !== undefined) updateData.name = updates.name;
+    if (updates.licensePlate !== undefined) updateData.licensePlate = updates.licensePlate;
+    if (updates.model !== undefined) updateData.model = updates.model;
+    if (updates.status !== undefined) updateData.status = updates.status;
+    if (updates.ignition !== undefined) updateData.ignition = updates.ignition;
+    if (updates.currentSpeed !== undefined) updateData.currentSpeed = updates.currentSpeed;
+    if (updates.speedLimit !== undefined) updateData.speedLimit = updates.speedLimit;
+    if (updates.heading !== undefined) updateData.heading = updates.heading;
+    if (updates.latitude !== undefined) updateData.latitude = updates.latitude;
+    if (updates.longitude !== undefined) updateData.longitude = updates.longitude;
+    if (updates.accuracy !== undefined) updateData.accuracy = updates.accuracy;
+    if (updates.lastUpdate !== undefined) updateData.lastUpdate = new Date(updates.lastUpdate);
+    if (updates.batteryLevel !== undefined) updateData.batteryLevel = updates.batteryLevel;
+
+    const result = await this.db.update(vehicles)
+      .set(updateData)
+      .where(eq(vehicles.id, id))
+      .returning();
+
+    if (result.length === 0) return undefined;
+    return this.mapVehicleFromDb(result[0]);
+  }
+
+  async deleteVehicle(id: string): Promise<boolean> {
+    const result = await this.db.delete(vehicles).where(eq(vehicles.id, id)).returning();
+    if (result.length > 0) {
+      await this.notifyVehicleUpdate();
+      return true;
+    }
+    return false;
+  }
+
+  private mapVehicleFromDb(row: typeof vehicles.$inferSelect): Vehicle {
+    return {
+      id: row.id,
+      name: row.name,
+      licensePlate: row.licensePlate,
+      model: row.model ?? undefined,
+      status: row.status,
+      ignition: row.ignition,
+      currentSpeed: row.currentSpeed,
+      speedLimit: row.speedLimit,
+      heading: row.heading,
+      latitude: row.latitude,
+      longitude: row.longitude,
+      accuracy: row.accuracy,
+      lastUpdate: row.lastUpdate.toISOString(),
+      batteryLevel: row.batteryLevel ?? undefined,
+    };
+  }
+
+  // ============================================
+  // GEOFENCES
+  // ============================================
+
+  async getGeofences(): Promise<Geofence[]> {
+    const result = await this.db.select().from(geofences);
+    return result.map(this.mapGeofenceFromDb);
+  }
+
+  async getGeofence(id: string): Promise<Geofence | undefined> {
+    const result = await this.db.select().from(geofences).where(eq(geofences.id, id));
+    return result[0] ? this.mapGeofenceFromDb(result[0]) : undefined;
+  }
+
+  async createGeofence(geofence: InsertGeofence): Promise<Geofence> {
+    const result = await this.db.insert(geofences).values({
+      name: geofence.name,
+      description: geofence.description,
+      type: geofence.type,
+      active: geofence.active,
+      centerLatitude: geofence.center?.latitude,
+      centerLongitude: geofence.center?.longitude,
+      radius: geofence.radius,
+      points: geofence.points,
+      rules: geofence.rules as GeofenceRule[],
+      vehicleIds: geofence.vehicleIds,
+      lastTriggered: geofence.lastTriggered ? new Date(geofence.lastTriggered) : null,
+      color: geofence.color,
+    }).returning();
+
+    return this.mapGeofenceFromDb(result[0]);
+  }
+
+  async updateGeofence(id: string, updates: Partial<Geofence>): Promise<Geofence | undefined> {
+    const updateData: Record<string, unknown> = { updatedAt: new Date() };
+    
+    if (updates.name !== undefined) updateData.name = updates.name;
+    if (updates.description !== undefined) updateData.description = updates.description;
+    if (updates.type !== undefined) updateData.type = updates.type;
+    if (updates.active !== undefined) updateData.active = updates.active;
+    if (updates.center !== undefined) {
+      updateData.centerLatitude = updates.center?.latitude;
+      updateData.centerLongitude = updates.center?.longitude;
+    }
+    if (updates.radius !== undefined) updateData.radius = updates.radius;
+    if (updates.points !== undefined) updateData.points = updates.points;
+    if (updates.rules !== undefined) updateData.rules = updates.rules;
+    if (updates.vehicleIds !== undefined) updateData.vehicleIds = updates.vehicleIds;
+    if (updates.lastTriggered !== undefined) updateData.lastTriggered = updates.lastTriggered ? new Date(updates.lastTriggered) : null;
+    if (updates.color !== undefined) updateData.color = updates.color;
+
+    const result = await this.db.update(geofences)
+      .set(updateData)
+      .where(eq(geofences.id, id))
+      .returning();
+
+    if (result.length === 0) return undefined;
+    return this.mapGeofenceFromDb(result[0]);
+  }
+
+  async deleteGeofence(id: string): Promise<boolean> {
+    const result = await this.db.delete(geofences).where(eq(geofences.id, id)).returning();
+    return result.length > 0;
+  }
+
+  private mapGeofenceFromDb(row: typeof geofences.$inferSelect): Geofence {
+    return {
+      id: row.id,
+      name: row.name,
+      description: row.description ?? undefined,
+      type: row.type,
+      active: row.active,
+      center: row.centerLatitude && row.centerLongitude ? {
+        latitude: row.centerLatitude,
+        longitude: row.centerLongitude,
+      } : undefined,
+      radius: row.radius ?? undefined,
+      points: row.points ?? undefined,
+      rules: (row.rules as GeofenceRule[]) || [],
+      vehicleIds: row.vehicleIds || [],
+      lastTriggered: row.lastTriggered?.toISOString() ?? undefined,
+      color: row.color ?? undefined,
+    };
+  }
+
+  // ============================================
+  // ALERTS
+  // ============================================
+
+  async getAlerts(): Promise<Alert[]> {
+    const result = await this.db.select().from(alerts).orderBy(desc(alerts.timestamp));
+    return result.map(this.mapAlertFromDb);
+  }
+
+  async getAlert(id: string): Promise<Alert | undefined> {
+    const result = await this.db.select().from(alerts).where(eq(alerts.id, id));
+    return result[0] ? this.mapAlertFromDb(result[0]) : undefined;
+  }
+
+  async createAlert(alert: InsertAlert): Promise<Alert> {
+    const result = await this.db.insert(alerts).values({
+      type: alert.type,
+      priority: alert.priority,
+      vehicleId: alert.vehicleId,
+      vehicleName: alert.vehicleName,
+      message: alert.message,
+      timestamp: new Date(alert.timestamp),
+      read: alert.read,
+      latitude: alert.latitude,
+      longitude: alert.longitude,
+      speed: alert.speed,
+      speedLimit: alert.speedLimit,
+      geofenceName: alert.geofenceName,
+    }).returning();
+
+    return this.mapAlertFromDb(result[0]);
+  }
+
+  async updateAlert(id: string, updates: Partial<Alert>): Promise<Alert | undefined> {
+    const updateData: Record<string, unknown> = {};
+    
+    if (updates.read !== undefined) updateData.read = updates.read;
+    if (updates.message !== undefined) updateData.message = updates.message;
+
+    const result = await this.db.update(alerts)
+      .set(updateData)
+      .where(eq(alerts.id, id))
+      .returning();
+
+    if (result.length === 0) return undefined;
+    return this.mapAlertFromDb(result[0]);
+  }
+
+  async markAllAlertsRead(): Promise<void> {
+    await this.db.update(alerts).set({ read: true });
+  }
+
+  async clearReadAlerts(): Promise<void> {
+    await this.db.delete(alerts).where(eq(alerts.read, true));
+  }
+
+  private mapAlertFromDb(row: typeof alerts.$inferSelect): Alert {
+    return {
+      id: row.id,
+      type: row.type,
+      priority: row.priority,
+      vehicleId: row.vehicleId,
+      vehicleName: row.vehicleName,
+      message: row.message,
+      timestamp: row.timestamp.toISOString(),
+      read: row.read,
+      latitude: row.latitude ?? undefined,
+      longitude: row.longitude ?? undefined,
+      speed: row.speed ?? undefined,
+      speedLimit: row.speedLimit ?? undefined,
+      geofenceName: row.geofenceName ?? undefined,
+    };
+  }
+
+  // ============================================
+  // TRIPS
+  // ============================================
+
+  async getTrips(vehicleId: string, startDate: string, endDate: string): Promise<Trip[]> {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    const tripsResult = await this.db.select().from(trips)
+      .where(and(
+        eq(trips.vehicleId, vehicleId),
+        gte(trips.startTime, start),
+        lte(trips.endTime, end)
+      ));
+
+    const result: Trip[] = [];
+
+    for (const trip of tripsResult) {
+      const points = await this.db.select().from(locationPoints)
+        .where(eq(locationPoints.tripId, trip.id));
+
+      const events = await this.db.select().from(routeEvents)
+        .where(eq(routeEvents.tripId, trip.id));
+
+      result.push({
+        id: trip.id,
+        vehicleId: trip.vehicleId,
+        startTime: trip.startTime.toISOString(),
+        endTime: trip.endTime.toISOString(),
+        totalDistance: trip.totalDistance,
+        travelTime: trip.travelTime,
+        stoppedTime: trip.stoppedTime,
+        averageSpeed: trip.averageSpeed,
+        maxSpeed: trip.maxSpeed,
+        stopsCount: trip.stopsCount,
+        points: points.map(p => ({
+          latitude: p.latitude,
+          longitude: p.longitude,
+          speed: p.speed,
+          heading: p.heading,
+          timestamp: p.timestamp.toISOString(),
+          accuracy: p.accuracy ?? undefined,
+        })),
+        events: events.map(e => ({
+          id: e.id,
+          type: e.type,
+          latitude: e.latitude,
+          longitude: e.longitude,
+          timestamp: e.timestamp.toISOString(),
+          duration: e.duration ?? undefined,
+          speed: e.speed ?? undefined,
+          speedLimit: e.speedLimit ?? undefined,
+          geofenceName: e.geofenceName ?? undefined,
+          address: e.address ?? undefined,
+        })),
+      });
+    }
+
+    return result;
+  }
+
+  // ============================================
+  // SPEED VIOLATIONS
+  // ============================================
+
+  async getSpeedViolations(startDate: string, endDate: string): Promise<SpeedViolation[]> {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    const result = await this.db.select().from(speedViolations)
+      .where(and(
+        gte(speedViolations.timestamp, start),
+        lte(speedViolations.timestamp, end)
+      ))
+      .orderBy(desc(speedViolations.timestamp));
+
+    return result.map(v => ({
+      id: v.id,
+      vehicleId: v.vehicleId,
+      vehicleName: v.vehicleName,
+      speed: v.speed,
+      speedLimit: v.speedLimit,
+      excessSpeed: v.excessSpeed,
+      timestamp: v.timestamp.toISOString(),
+      latitude: v.latitude,
+      longitude: v.longitude,
+      duration: v.duration,
+    }));
+  }
+
+  async getSpeedStats(startDate: string, endDate: string): Promise<VehicleStats> {
+    const violations = await this.getSpeedViolations(startDate, endDate);
+
+    const byVehicle = new Map<string, { count: number; totalExcess: number; lastViolation: string; name: string }>();
+
+    violations.forEach(v => {
+      const existing = byVehicle.get(v.vehicleId);
+      if (existing) {
+        existing.count++;
+        existing.totalExcess += v.excessSpeed;
+        if (new Date(v.timestamp) > new Date(existing.lastViolation)) {
+          existing.lastViolation = v.timestamp;
+        }
+      } else {
+        byVehicle.set(v.vehicleId, {
+          count: 1,
+          totalExcess: v.excessSpeed,
+          lastViolation: v.timestamp,
+          name: v.vehicleName,
+        });
+      }
+    });
+
+    const byDay = new Map<string, number>();
+    violations.forEach(v => {
+      const day = v.timestamp.split("T")[0];
+      byDay.set(day, (byDay.get(day) || 0) + 1);
+    });
+
+    const topViolators = Array.from(byVehicle.entries())
+      .map(([vehicleId, data]) => ({
+        vehicleId,
+        vehicleName: data.name,
+        totalViolations: data.count,
+        averageExcessSpeed: data.totalExcess / data.count,
+        lastViolation: data.lastViolation,
+      }))
+      .sort((a, b) => b.totalViolations - a.totalViolations)
+      .slice(0, 10);
+
+    return {
+      totalViolations: violations.length,
+      vehiclesWithViolations: byVehicle.size,
+      averageExcessSpeed: violations.length > 0 
+        ? violations.reduce((sum, v) => sum + v.excessSpeed, 0) / violations.length 
+        : 0,
+      violationsByDay: Array.from(byDay.entries())
+        .map(([date, count]) => ({ date, count }))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+      topViolators,
+    };
+  }
+}
+
+// ============================================
+// MEM STORAGE (Fallback para desenvolvimento)
+// ============================================
 
 const sampleVehicles: Vehicle[] = [
   {
@@ -254,7 +723,6 @@ const sampleAlerts: Alert[] = [
 function generateSampleTrip(vehicleId: string, startDate: string, endDate: string): Trip {
   const vehicle = sampleVehicles.find(v => v.id === vehicleId);
   const start = new Date(startDate);
-  const end = new Date(endDate);
   
   const baseLat = -23.5505;
   const baseLng = -46.6333;
@@ -442,8 +910,6 @@ function generateSpeedStats(startDate: string, endDate: string): VehicleStats {
   };
 }
 
-type VehicleUpdateCallback = (vehicles: Vehicle[]) => void;
-
 export class MemStorage implements IStorage {
   private vehicles: Map<string, Vehicle>;
   private geofences: Map<string, Geofence>;
@@ -608,4 +1074,17 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// ============================================
+// FACTORY FUNCTION
+// ============================================
+
+function createStorage(): IStorage {
+  if (isDatabaseConfigured()) {
+    console.log("✅ Usando Supabase Storage (PostgreSQL)");
+    return new SupabaseStorage();
+  }
+  console.log("⚠️ Usando MemStorage (desenvolvimento)");
+  return new MemStorage();
+}
+
+export const storage = createStorage();
