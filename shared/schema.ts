@@ -362,6 +362,21 @@ export const vehicleStatsSchema = z.object({
 
 export type VehicleStats = z.infer<typeof vehicleStatsSchema>;
 
+// Fleet general stats schema
+export const fleetStatsSchema = z.object({
+  totalVehicles: z.number(),
+  averageSpeed: z.number(),
+  totalDistance: z.number(),
+  mostActiveVehicle: z.object({
+    id: z.string(),
+    name: z.string(),
+    distance: z.number(),
+    avgSpeed: z.number(),
+  }).optional().nullable(),
+});
+
+export type FleetStats = z.infer<typeof fleetStatsSchema>;
+
 // User schema
 export const insertUserSchema = z.object({
   username: z.string(),

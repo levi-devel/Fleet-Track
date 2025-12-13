@@ -315,5 +315,19 @@ export async function registerRoutes(
     }
   });
 
+  app.get("/api/reports/fleet-stats", async (req, res) => {
+    try {
+      const { startDate, endDate } = req.query;
+      
+      const start = startDate ? String(startDate) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const end = endDate ? String(endDate) : new Date().toISOString();
+      
+      const stats = await storage.getFleetStats(start, end);
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch fleet stats" });
+    }
+  });
+
   return httpServer;
 }

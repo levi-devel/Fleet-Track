@@ -16,7 +16,8 @@ import type {
   Geofence, InsertGeofence,
   Alert, InsertAlert,
   Trip, SpeedViolation, VehicleStats,
-  LocationPoint, RouteEvent, GeofenceRule
+  LocationPoint, RouteEvent, GeofenceRule,
+  FleetStats
 } from "@shared/schema";
 
 type VehicleUpdateCallback = (vehicles: Vehicle[]) => void;
@@ -46,6 +47,7 @@ export interface IStorage {
   
   getSpeedViolations(startDate: string, endDate: string): Promise<SpeedViolation[]>;
   getSpeedStats(startDate: string, endDate: string): Promise<VehicleStats>;
+  getFleetStats(startDate: string, endDate: string): Promise<FleetStats>;
   
   // Callback para atualizações de veículos em tempo real
   onVehicleUpdate(callback: VehicleUpdateCallback): () => void;
@@ -195,8 +197,36 @@ export class SupabaseStorage implements IStorage {
         accuracy: vehicle.accuracy,
         recordedAt: new Date(),
       });
+      
+      // Detectar violação de velocidade
+      if (vehicle.currentSpeed > vehicle.speedLimit) {
+        await this.recordSpeedViolation(vehicle);
+      }
     } catch (error) {
       console.error("Erro ao salvar histórico de localização:", error);
+    }
+  }
+  
+  // Registra uma violação de velocidade
+  private async recordSpeedViolation(vehicle: Vehicle): Promise<void> {
+    try {
+      const excessSpeed = vehicle.currentSpeed - vehicle.speedLimit;
+      
+      await this.db.insert(speedViolations).values({
+        vehicleId: vehicle.id,
+        vehicleName: vehicle.name,
+        speed: vehicle.currentSpeed,
+        speedLimit: vehicle.speedLimit,
+        excessSpeed,
+        timestamp: new Date(),
+        latitude: vehicle.latitude,
+        longitude: vehicle.longitude,
+        duration: 0, // Será calculado posteriormente se necessário
+      });
+      
+      console.log(`⚠️ Violação de velocidade detectada: ${vehicle.name} - ${vehicle.currentSpeed}/${vehicle.speedLimit} km/h`);
+    } catch (error) {
+      console.error("Erro ao registrar violação de velocidade:", error);
     }
   }
 
@@ -640,6 +670,95 @@ export class SupabaseStorage implements IStorage {
         .map(([date, count]) => ({ date, count }))
         .sort((a, b) => a.date.localeCompare(b.date)),
       topViolators,
+    };
+  }
+
+  async getFleetStats(startDate: string, endDate: string): Promise<FleetStats> {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+
+    // Total de veículos cadastrados
+    const allVehicles = await this.getVehicles();
+    const totalVehicles = allVehicles.length;
+
+    // Buscar histórico de todos os veículos no período
+    const historyData = await this.db.select()
+      .from(vehicleLocationHistory)
+      .where(and(
+        gte(vehicleLocationHistory.recordedAt, start),
+        lte(vehicleLocationHistory.recordedAt, end)
+      ));
+
+    if (historyData.length === 0) {
+      return {
+        totalVehicles,
+        averageSpeed: 0,
+        totalDistance: 0,
+        mostActiveVehicle: null,
+      };
+    }
+
+    // Calcular velocidade média de todos os veículos
+    const speeds = historyData.map(h => h.speed);
+    const averageSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+
+    // Calcular distância por veículo
+    const vehicleDistances = new Map<string, { name: string; distance: number; speeds: number[] }>();
+
+    for (const vehicle of allVehicles) {
+      const vehicleHistory = historyData
+        .filter(h => h.vehicleId === vehicle.id)
+        .sort((a, b) => a.recordedAt.getTime() - b.recordedAt.getTime());
+
+      if (vehicleHistory.length > 0) {
+        let distance = 0;
+        const vehicleSpeeds: number[] = [];
+
+        for (let i = 1; i < vehicleHistory.length; i++) {
+          distance += this.calculateDistance(
+            vehicleHistory[i - 1].latitude,
+            vehicleHistory[i - 1].longitude,
+            vehicleHistory[i].latitude,
+            vehicleHistory[i].longitude
+          );
+          vehicleSpeeds.push(vehicleHistory[i].speed);
+        }
+
+        vehicleDistances.set(vehicle.id, {
+          name: vehicle.name,
+          distance,
+          speeds: vehicleSpeeds,
+        });
+      }
+    }
+
+    // Encontrar veículo mais ativo (maior distância)
+    let mostActiveVehicle = null;
+    let maxDistance = 0;
+
+    for (const [id, data] of vehicleDistances.entries()) {
+      if (data.distance > maxDistance) {
+        maxDistance = data.distance;
+        const avgSpeed = data.speeds.length > 0
+          ? data.speeds.reduce((a, b) => a + b, 0) / data.speeds.length
+          : 0;
+        mostActiveVehicle = {
+          id,
+          name: data.name,
+          distance: Math.round(data.distance),
+          avgSpeed: Math.round(avgSpeed),
+        };
+      }
+    }
+
+    const totalDistance = Array.from(vehicleDistances.values())
+      .reduce((sum, v) => sum + v.distance, 0);
+
+    return {
+      totalVehicles,
+      averageSpeed: Math.round(averageSpeed),
+      totalDistance: Math.round(totalDistance),
+      mostActiveVehicle,
     };
   }
 }
@@ -1222,6 +1341,20 @@ export class MemStorage implements IStorage {
 
   async getSpeedStats(startDate: string, endDate: string): Promise<VehicleStats> {
     return generateSpeedStats(startDate, endDate);
+  }
+
+  async getFleetStats(startDate: string, endDate: string): Promise<FleetStats> {
+    return {
+      totalVehicles: this.vehicles.size,
+      averageSpeed: 65,
+      totalDistance: 15000,
+      mostActiveVehicle: {
+        id: "v1",
+        name: "🚛 Caminhão 01",
+        distance: 5000,
+        avgSpeed: 72,
+      },
+    };
   }
 }
 

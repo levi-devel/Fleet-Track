@@ -2,11 +2,13 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { 
   Gauge, TrendingUp, TrendingDown, Minus, AlertTriangle,
-  Download, Calendar as CalendarIcon, Truck, BarChart3
+  Download, Calendar as CalendarIcon, Truck, BarChart3, MapPin, Users
 } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar } from "@/components/ui/calendar";
@@ -15,7 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
-import type { VehicleStats, SpeedViolation } from "@shared/schema";
+import type { VehicleStats, SpeedViolation, FleetStats } from "@shared/schema";
 
 export default function ReportsPage() {
   const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
@@ -23,12 +25,19 @@ export default function ReportsPage() {
     to: new Date(),
   });
 
+  const statsQueryUrl = `/api/reports/speed-stats?startDate=${dateRange.from.toISOString()}&endDate=${dateRange.to.toISOString()}`;
+  const violationsQueryUrl = `/api/reports/violations?startDate=${dateRange.from.toISOString()}&endDate=${dateRange.to.toISOString()}`;
+
   const { data: stats, isLoading: isLoadingStats } = useQuery<VehicleStats>({
-    queryKey: ["/api/reports/speed-stats", dateRange.from.toISOString(), dateRange.to.toISOString()],
+    queryKey: [statsQueryUrl],
   });
 
   const { data: violations = [], isLoading: isLoadingViolations } = useQuery<SpeedViolation[]>({
-    queryKey: ["/api/reports/violations", dateRange.from.toISOString(), dateRange.to.toISOString()],
+    queryKey: [violationsQueryUrl],
+  });
+
+  const { data: fleetStats, isLoading: isLoadingFleetStats } = useQuery<FleetStats>({
+    queryKey: [`/api/reports/fleet-stats?startDate=${dateRange.from.toISOString()}&endDate=${dateRange.to.toISOString()}`],
   });
 
   const quickFilters = [
@@ -59,6 +68,192 @@ export default function ReportsPage() {
     count: item.count,
   })) || [];
 
+  const handleExportPDF = () => {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    let yPos = 20;
+
+    // Cabeçalho
+    doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
+    doc.text("Relatório de Velocidade", pageWidth / 2, yPos, { align: "center" });
+    
+    yPos += 10;
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.text("Análise de conformidade e infrações de velocidade", pageWidth / 2, yPos, { align: "center" });
+    
+    yPos += 8;
+    doc.setFontSize(9);
+    doc.text(
+      `Período: ${format(dateRange.from, "dd/MM/yyyy", { locale: ptBR })} - ${format(dateRange.to, "dd/MM/yyyy", { locale: ptBR })}`,
+      pageWidth / 2,
+      yPos,
+      { align: "center" }
+    );
+    
+    yPos += 15;
+
+    // Estatísticas Gerais da Frota
+    if (fleetStats) {
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Estatísticas Gerais da Frota", 14, yPos);
+      yPos += 8;
+
+      const fleetStatsData = [
+        ["Total de Veículos", `${fleetStats.totalVehicles} cadastrados`],
+        ["Velocidade Média Geral", `${fleetStats.averageSpeed} km/h`],
+        ["Distância Total", `${fleetStats.totalDistance ? (fleetStats.totalDistance / 1000).toFixed(1) : 0} km`],
+        [
+          "Veículo Mais Ativo",
+          fleetStats.mostActiveVehicle
+            ? `${fleetStats.mostActiveVehicle.name} - ${(fleetStats.mostActiveVehicle.distance / 1000).toFixed(1)} km • ${fleetStats.mostActiveVehicle.avgSpeed} km/h`
+            : "Sem dados"
+        ],
+      ];
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [["Métrica", "Valor"]],
+        body: fleetStatsData,
+        theme: "grid",
+        headStyles: { fillColor: [41, 128, 185], fontSize: 10, fontStyle: "bold" },
+        styles: { fontSize: 9, cellPadding: 3 },
+        margin: { left: 14, right: 14 },
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 12;
+    }
+
+    // Verificar se precisa de nova página
+    if (yPos > pageHeight - 60) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    // Estatísticas de Infrações
+    if (stats) {
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Estatísticas de Infrações", 14, yPos);
+      yPos += 8;
+
+      const violationStatsData = [
+        ["Total de Infrações", `${stats.totalViolations}`],
+        ["Veículos com Infrações", `${stats.vehiclesWithViolations} veículos`],
+        ["Excesso Médio", `+${Math.round(stats.averageExcessSpeed)} km/h acima do limite`],
+      ];
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [["Métrica", "Valor"]],
+        body: violationStatsData,
+        theme: "grid",
+        headStyles: { fillColor: [231, 76, 60], fontSize: 10, fontStyle: "bold" },
+        styles: { fontSize: 9, cellPadding: 3 },
+        margin: { left: 14, right: 14 },
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 12;
+    }
+
+    // Verificar se precisa de nova página
+    if (yPos > pageHeight - 80) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    // Top 10 Veículos com Mais Infrações
+    if (stats?.topViolators && stats.topViolators.length > 0) {
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Top 10 Veículos com Mais Infrações", 14, yPos);
+      yPos += 8;
+
+      const topViolatorsData = stats.topViolators.slice(0, 10).map((v, idx) => [
+        `${idx + 1}`,
+        v.vehicleName,
+        `${v.totalViolations}`,
+        `+${Math.round(v.averageExcessSpeed)} km/h`,
+        format(new Date(v.lastViolation), "dd/MM/yyyy HH:mm", { locale: ptBR }),
+      ]);
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [["#", "Veículo", "Total", "Excesso Médio", "Última Infração"]],
+        body: topViolatorsData,
+        theme: "striped",
+        headStyles: { fillColor: [52, 73, 94], fontSize: 9, fontStyle: "bold" },
+        styles: { fontSize: 8, cellPadding: 2 },
+        margin: { left: 14, right: 14 },
+        columnStyles: {
+          0: { halign: "center" },
+          2: { halign: "center" },
+          3: { halign: "center" },
+        },
+      });
+
+      yPos = (doc as any).lastAutoTable.finalY + 12;
+    }
+
+    // Verificar se precisa de nova página
+    if (yPos > pageHeight - 80) {
+      doc.addPage();
+      yPos = 20;
+    }
+
+    // Detalhamento de Infrações (últimas 50)
+    if (violations && violations.length > 0) {
+      doc.setFontSize(12);
+      doc.setFont("helvetica", "bold");
+      doc.text("Detalhamento de Infrações (Últimas 50)", 14, yPos);
+      yPos += 8;
+
+      const violationsData = violations.slice(0, 50).map(v => [
+        format(new Date(v.timestamp), "dd/MM/yyyy HH:mm", { locale: ptBR }),
+        v.vehicleName,
+        `${v.speed} km/h`,
+        `${v.speedLimit} km/h`,
+        `+${v.excessSpeed} km/h`,
+      ]);
+
+      autoTable(doc, {
+        startY: yPos,
+        head: [["Data/Hora", "Veículo", "Vel.", "Limite", "Excesso"]],
+        body: violationsData,
+        theme: "striped",
+        headStyles: { fillColor: [52, 73, 94], fontSize: 8, fontStyle: "bold" },
+        styles: { fontSize: 7, cellPadding: 2 },
+        margin: { left: 14, right: 14 },
+        columnStyles: {
+          2: { halign: "center" },
+          3: { halign: "center" },
+          4: { halign: "center", textColor: [231, 76, 60] },
+        },
+      });
+    }
+
+    // Rodapé em todas as páginas
+    const totalPages = (doc as any).internal.getNumberOfPages();
+    for (let i = 1; i <= totalPages; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setTextColor(128);
+      doc.text(
+        `FleetTrack - Gerado em ${format(new Date(), "dd/MM/yyyy HH:mm", { locale: ptBR })}`,
+        14,
+        pageHeight - 10
+      );
+      doc.text(`Página ${i} de ${totalPages}`, pageWidth - 14, pageHeight - 10, { align: "right" });
+    }
+
+    // Salvar PDF
+    const fileName = `relatorio-velocidade-${format(dateRange.from, "yyyy-MM-dd")}-${format(dateRange.to, "yyyy-MM-dd")}.pdf`;
+    doc.save(fileName);
+  };
+
   return (
     <div className="flex flex-col h-full" data-testid="reports-page">
       <div className="p-4 border-b border-border bg-card">
@@ -83,11 +278,15 @@ export default function ReportsPage() {
                   mode="range"
                   selected={{ from: dateRange.from, to: dateRange.to }}
                   onSelect={(range) => {
-                    if (range?.from && range?.to) {
-                      setDateRange({ from: range.from, to: range.to });
+                    if (range?.from) {
+                      setDateRange({ 
+                        from: range.from, 
+                        to: range.to || range.from 
+                      });
                     }
                   }}
                   locale={ptBR}
+                  numberOfMonths={2}
                 />
               </PopoverContent>
             </Popover>
@@ -104,7 +303,7 @@ export default function ReportsPage() {
               </Button>
             ))}
             
-            <Button variant="outline" className="gap-2" data-testid="button-export">
+            <Button variant="outline" className="gap-2" data-testid="button-export" onClick={handleExportPDF}>
               <Download className="h-4 w-4" />
               Exportar
             </Button>
@@ -113,6 +312,100 @@ export default function ReportsPage() {
       </div>
 
       <div className="flex-1 overflow-auto p-4 space-y-6">
+        {/* Estatísticas Gerais da Frota */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          <Card>
+            <CardContent className="p-6">
+              {isLoadingFleetStats ? (
+                <Skeleton className="h-24" />
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
+                    <Users className="h-4 w-4" />
+                    Total de Veículos
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <span className="text-3xl font-bold font-mono">
+                      {fleetStats?.totalVehicles || 0}
+                    </span>
+                    <span className="text-sm text-muted-foreground pb-1">cadastrados</span>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              {isLoadingFleetStats ? (
+                <Skeleton className="h-24" />
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
+                    <Gauge className="h-4 w-4" />
+                    Velocidade Média Geral
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <span className="text-3xl font-bold font-mono">
+                      {fleetStats?.averageSpeed || 0}
+                    </span>
+                    <span className="text-sm text-muted-foreground pb-1">km/h</span>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              {isLoadingFleetStats ? (
+                <Skeleton className="h-24" />
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
+                    <MapPin className="h-4 w-4" />
+                    Distância Total
+                  </div>
+                  <div className="flex items-end gap-2">
+                    <span className="text-3xl font-bold font-mono">
+                      {fleetStats?.totalDistance ? (fleetStats.totalDistance / 1000).toFixed(1) : 0}
+                    </span>
+                    <span className="text-sm text-muted-foreground pb-1">km</span>
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              {isLoadingFleetStats ? (
+                <Skeleton className="h-24" />
+              ) : (
+                <>
+                  <div className="flex items-center gap-2 text-muted-foreground text-sm mb-2">
+                    <Truck className="h-4 w-4" />
+                    Veículo Mais Ativo
+                  </div>
+                  {fleetStats?.mostActiveVehicle ? (
+                    <>
+                      <div className="text-lg font-bold truncate" title={fleetStats.mostActiveVehicle.name}>
+                        {fleetStats.mostActiveVehicle.name}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {(fleetStats.mostActiveVehicle.distance / 1000).toFixed(1)} km • {fleetStats.mostActiveVehicle.avgSpeed} km/h
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">Sem dados</div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Estatísticas de Infrações */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <Card>
             <CardContent className="p-6">

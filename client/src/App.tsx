@@ -43,10 +43,11 @@ function Navigation() {
   return (
     <header className="h-16 border-b border-border bg-card flex items-center px-6 gap-6 sticky top-0 z-50">
       <Link href="/" className="flex items-center gap-2">
-        <div className="h-9 w-9 rounded-md bg-primary flex items-center justify-center">
-          <Truck className="h-5 w-5 text-primary-foreground" />
-        </div>
-        <span className="font-semibold text-lg hidden md:block">FleetTrack</span>
+        <img 
+          src="/3783db29-8eec-4649-ab40-b8817ae0c11a.png" 
+          alt="FleetTrack" 
+          className="h-14 w-auto object-contain dark:invert"
+        />
       </Link>
       
       <nav className="flex items-center gap-1 flex-1">
