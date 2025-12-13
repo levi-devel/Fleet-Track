@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { 
   X, MapPin, Gauge, Navigation, Radio, Battery, Clock, 
-  History, Shield, AlertTriangle, Bell, Activity, Settings
+  History, Shield, AlertTriangle, Bell, Activity, Settings, Pencil, Trash2
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { VehicleFormModal } from "@/components/vehicle-form-modal";
+import { VehicleDeleteDialog } from "@/components/vehicle-delete-dialog";
 import { cn } from "@/lib/utils";
 import type { Vehicle, Alert } from "@shared/schema";
 import { Link } from "wouter";
@@ -22,6 +24,9 @@ interface VehicleDetailPanelProps {
 }
 
 export function VehicleDetailPanel({ vehicle, alerts, onClose, onFollowVehicle, isFollowing }: VehicleDetailPanelProps) {
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+
   const vehicleAlerts = alerts.filter(a => a.vehicleId === vehicle.id);
   const unreadAlerts = vehicleAlerts.filter(a => !a.read);
 
@@ -212,6 +217,30 @@ export function VehicleDetailPanel({ vehicle, alerts, onClose, onFollowVehicle, 
               <Settings className="h-4 w-4" />
               Definir limite de velocidade
             </Button>
+
+            <Separator />
+
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                className="flex-1 justify-start gap-2"
+                onClick={() => setIsEditModalOpen(true)}
+                data-testid="button-edit-vehicle"
+              >
+                <Pencil className="h-4 w-4" />
+                Editar
+              </Button>
+              
+              <Button
+                variant="outline"
+                className="flex-1 justify-start gap-2 text-destructive hover:text-destructive"
+                onClick={() => setIsDeleteDialogOpen(true)}
+                data-testid="button-delete-vehicle"
+              >
+                <Trash2 className="h-4 w-4" />
+                Excluir
+              </Button>
+            </div>
           </div>
         </TabsContent>
 
@@ -294,6 +323,19 @@ export function VehicleDetailPanel({ vehicle, alerts, onClose, onFollowVehicle, 
           </ScrollArea>
         </TabsContent>
       </Tabs>
+
+      <VehicleFormModal
+        open={isEditModalOpen}
+        onOpenChange={setIsEditModalOpen}
+        vehicle={vehicle}
+      />
+
+      <VehicleDeleteDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+        vehicle={vehicle}
+        onSuccess={onClose}
+      />
     </div>
   );
 }

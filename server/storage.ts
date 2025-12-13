@@ -9,6 +9,7 @@ import {
   locationPoints,
   routeEvents,
   speedViolations,
+  vehicleLocationHistory,
 } from "@shared/schema";
 import type { 
   Vehicle, InsertVehicle,
@@ -23,6 +24,7 @@ type VehicleUpdateCallback = (vehicles: Vehicle[]) => void;
 export interface IStorage {
   getVehicles(): Promise<Vehicle[]>;
   getVehicle(id: string): Promise<Vehicle | undefined>;
+  getVehicleByPlate(licensePlate: string): Promise<Vehicle | undefined>;
   createVehicle(vehicle: InsertVehicle): Promise<Vehicle>;
   updateVehicle(id: string, updates: Partial<Vehicle>): Promise<Vehicle | undefined>;
   deleteVehicle(id: string): Promise<boolean>;
@@ -119,6 +121,11 @@ export class SupabaseStorage implements IStorage {
     return result[0] ? this.mapVehicleFromDb(result[0]) : undefined;
   }
 
+  async getVehicleByPlate(licensePlate: string): Promise<Vehicle | undefined> {
+    const result = await this.db.select().from(vehicles).where(eq(vehicles.licensePlate, licensePlate));
+    return result[0] ? this.mapVehicleFromDb(result[0]) : undefined;
+  }
+
   async createVehicle(vehicle: InsertVehicle): Promise<Vehicle> {
     const result = await this.db.insert(vehicles).values({
       name: vehicle.name,
@@ -163,7 +170,34 @@ export class SupabaseStorage implements IStorage {
       .returning();
 
     if (result.length === 0) return undefined;
-    return this.mapVehicleFromDb(result[0]);
+    
+    const updatedVehicle = this.mapVehicleFromDb(result[0]);
+    
+    // Salvar histórico de localização se houver mudança de posição
+    if (updates.latitude !== undefined || updates.longitude !== undefined) {
+      await this.saveLocationHistory(updatedVehicle);
+    }
+    
+    return updatedVehicle;
+  }
+
+  // Salva um ponto no histórico de localizações
+  private async saveLocationHistory(vehicle: Vehicle): Promise<void> {
+    try {
+      await this.db.insert(vehicleLocationHistory).values({
+        vehicleId: vehicle.id,
+        latitude: vehicle.latitude,
+        longitude: vehicle.longitude,
+        speed: vehicle.currentSpeed,
+        heading: vehicle.heading,
+        status: vehicle.status,
+        ignition: vehicle.ignition,
+        accuracy: vehicle.accuracy,
+        recordedAt: new Date(),
+      });
+    } catch (error) {
+      console.error("Erro ao salvar histórico de localização:", error);
+    }
   }
 
   async deleteVehicle(id: string): Promise<boolean> {
@@ -361,57 +395,170 @@ export class SupabaseStorage implements IStorage {
     const start = new Date(startDate);
     const end = new Date(endDate);
 
-    const tripsResult = await this.db.select().from(trips)
+    // Buscar histórico de localizações do veículo no período
+    const historyPoints = await this.db.select()
+      .from(vehicleLocationHistory)
       .where(and(
-        eq(trips.vehicleId, vehicleId),
-        gte(trips.startTime, start),
-        lte(trips.endTime, end)
-      ));
+        eq(vehicleLocationHistory.vehicleId, vehicleId),
+        gte(vehicleLocationHistory.recordedAt, start),
+        lte(vehicleLocationHistory.recordedAt, end)
+      ))
+      .orderBy(vehicleLocationHistory.recordedAt);
 
-    const result: Trip[] = [];
+    if (historyPoints.length === 0) {
+      return [];
+    }
 
-    for (const trip of tripsResult) {
-      const points = await this.db.select().from(locationPoints)
-        .where(eq(locationPoints.tripId, trip.id));
+    // Construir viagem a partir dos pontos de histórico
+    const trip = this.buildTripFromHistory(vehicleId, historyPoints);
+    return trip ? [trip] : [];
+  }
 
-      const events = await this.db.select().from(routeEvents)
-        .where(eq(routeEvents.tripId, trip.id));
+  // Constrói uma viagem a partir dos pontos de histórico
+  private buildTripFromHistory(
+    vehicleId: string, 
+    points: (typeof vehicleLocationHistory.$inferSelect)[]
+  ): Trip | null {
+    if (points.length === 0) return null;
 
-      result.push({
-        id: trip.id,
-        vehicleId: trip.vehicleId,
-        startTime: trip.startTime.toISOString(),
-        endTime: trip.endTime.toISOString(),
-        totalDistance: trip.totalDistance,
-        travelTime: trip.travelTime,
-        stoppedTime: trip.stoppedTime,
-        averageSpeed: trip.averageSpeed,
-        maxSpeed: trip.maxSpeed,
-        stopsCount: trip.stopsCount,
-        points: points.map(p => ({
-          latitude: p.latitude,
-          longitude: p.longitude,
-          speed: p.speed,
-          heading: p.heading,
-          timestamp: p.timestamp.toISOString(),
-          accuracy: p.accuracy ?? undefined,
-        })),
-        events: events.map(e => ({
-          id: e.id,
-          type: e.type,
-          latitude: e.latitude,
-          longitude: e.longitude,
-          timestamp: e.timestamp.toISOString(),
-          duration: e.duration ?? undefined,
-          speed: e.speed ?? undefined,
-          speedLimit: e.speedLimit ?? undefined,
-          geofenceName: e.geofenceName ?? undefined,
-          address: e.address ?? undefined,
-        })),
+    const locationPoints: LocationPoint[] = points.map(p => ({
+      latitude: p.latitude,
+      longitude: p.longitude,
+      speed: p.speed,
+      heading: p.heading,
+      timestamp: p.recordedAt.toISOString(),
+      accuracy: p.accuracy ?? undefined,
+    }));
+
+    // Calcular estatísticas
+    const speeds = points.map(p => p.speed);
+    const maxSpeed = Math.max(...speeds);
+    const avgSpeed = speeds.reduce((a, b) => a + b, 0) / speeds.length;
+    
+    // Calcular distância total (fórmula de Haversine simplificada)
+    let totalDistance = 0;
+    for (let i = 1; i < points.length; i++) {
+      totalDistance += this.calculateDistance(
+        points[i - 1].latitude, points[i - 1].longitude,
+        points[i].latitude, points[i].longitude
+      );
+    }
+
+    // Calcular tempo de viagem e tempo parado
+    const startTime = points[0].recordedAt;
+    const endTime = points[points.length - 1].recordedAt;
+    const totalTimeMs = endTime.getTime() - startTime.getTime();
+    const totalTimeMinutes = Math.round(totalTimeMs / 60000);
+    
+    // Contar paradas (quando velocidade = 0 por mais de 1 minuto)
+    const stops: { start: number; end: number; lat: number; lng: number }[] = [];
+    let stopStart: number | null = null;
+    let stopLat = 0;
+    let stopLng = 0;
+    
+    for (let i = 0; i < points.length; i++) {
+      if (points[i].speed === 0) {
+        if (stopStart === null) {
+          stopStart = i;
+          stopLat = points[i].latitude;
+          stopLng = points[i].longitude;
+        }
+      } else {
+        if (stopStart !== null) {
+          const stopDuration = points[i].recordedAt.getTime() - points[stopStart].recordedAt.getTime();
+          if (stopDuration > 60000) { // Mais de 1 minuto
+            stops.push({ start: stopStart, end: i - 1, lat: stopLat, lng: stopLng });
+          }
+          stopStart = null;
+        }
+      }
+    }
+
+    // Calcular tempo parado total
+    let stoppedTimeMs = 0;
+    for (const stop of stops) {
+      stoppedTimeMs += points[stop.end].recordedAt.getTime() - points[stop.start].recordedAt.getTime();
+    }
+    const stoppedTimeMinutes = Math.round(stoppedTimeMs / 60000);
+    const travelTimeMinutes = totalTimeMinutes - stoppedTimeMinutes;
+
+    // Gerar eventos
+    const events: RouteEvent[] = [];
+    
+    // Evento de partida
+    events.push({
+      id: `dep-${vehicleId}-${startTime.getTime()}`,
+      type: "departure",
+      latitude: points[0].latitude,
+      longitude: points[0].longitude,
+      timestamp: startTime.toISOString(),
+      duration: undefined,
+      speed: points[0].speed,
+      speedLimit: undefined,
+      geofenceName: undefined,
+      address: undefined,
+    });
+
+    // Eventos de parada
+    for (let i = 0; i < stops.length; i++) {
+      const stop = stops[i];
+      const duration = Math.round(
+        (points[stop.end].recordedAt.getTime() - points[stop.start].recordedAt.getTime()) / 60000
+      );
+      events.push({
+        id: `stop-${vehicleId}-${i}`,
+        type: "stop",
+        latitude: stop.lat,
+        longitude: stop.lng,
+        timestamp: points[stop.start].recordedAt.toISOString(),
+        duration,
+        speed: 0,
+        speedLimit: undefined,
+        geofenceName: undefined,
+        address: undefined,
       });
     }
 
-    return result;
+    // Evento de chegada
+    events.push({
+      id: `arr-${vehicleId}-${endTime.getTime()}`,
+      type: "arrival",
+      latitude: points[points.length - 1].latitude,
+      longitude: points[points.length - 1].longitude,
+      timestamp: endTime.toISOString(),
+      duration: undefined,
+      speed: points[points.length - 1].speed,
+      speedLimit: undefined,
+      geofenceName: undefined,
+      address: undefined,
+    });
+
+    return {
+      id: `trip-${vehicleId}-${startTime.getTime()}`,
+      vehicleId,
+      startTime: startTime.toISOString(),
+      endTime: endTime.toISOString(),
+      totalDistance: Math.round(totalDistance),
+      travelTime: travelTimeMinutes,
+      stoppedTime: stoppedTimeMinutes,
+      averageSpeed: Math.round(avgSpeed),
+      maxSpeed: Math.round(maxSpeed),
+      stopsCount: stops.length,
+      points: locationPoints,
+      events,
+    };
+  }
+
+  // Calcula distância entre dois pontos em metros (Haversine)
+  private calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371000; // Raio da Terra em metros
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
   }
 
   // ============================================
@@ -504,7 +651,7 @@ export class SupabaseStorage implements IStorage {
 const sampleVehicles: Vehicle[] = [
   {
     id: "v1",
-    name: "Caminhão 01",
+    name: "🚛 Caminhão 01",
     licensePlate: "ABC-1234",
     model: "Mercedes Actros",
     status: "moving",
@@ -520,7 +667,7 @@ const sampleVehicles: Vehicle[] = [
   },
   {
     id: "v2",
-    name: "Van 02",
+    name: "🚐 Van 02",
     licensePlate: "DEF-5678",
     model: "Fiat Ducato",
     status: "moving",
@@ -536,7 +683,7 @@ const sampleVehicles: Vehicle[] = [
   },
   {
     id: "v3",
-    name: "Caminhão 03",
+    name: "🚛 Caminhão 03",
     licensePlate: "GHI-9012",
     model: "Volvo FH",
     status: "stopped",
@@ -552,7 +699,7 @@ const sampleVehicles: Vehicle[] = [
   },
   {
     id: "v4",
-    name: "Van 04",
+    name: "🚐 Van 04",
     licensePlate: "JKL-3456",
     model: "Renault Master",
     status: "moving",
@@ -568,7 +715,7 @@ const sampleVehicles: Vehicle[] = [
   },
   {
     id: "v5",
-    name: "Caminhão 05",
+    name: "🚛 Caminhão PoloTelecom",
     licensePlate: "MNO-7890",
     model: "Scania R450",
     status: "idle",
@@ -584,7 +731,7 @@ const sampleVehicles: Vehicle[] = [
   },
   {
     id: "v6",
-    name: "Van 06",
+    name: "🚐 Van 06",
     licensePlate: "PQR-1234",
     model: "VW Delivery",
     status: "offline",
@@ -968,6 +1115,10 @@ export class MemStorage implements IStorage {
 
   async getVehicle(id: string): Promise<Vehicle | undefined> {
     return this.vehicles.get(id);
+  }
+
+  async getVehicleByPlate(licensePlate: string): Promise<Vehicle | undefined> {
+    return Array.from(this.vehicles.values()).find(v => v.licensePlate === licensePlate);
   }
 
   async createVehicle(vehicle: InsertVehicle): Promise<Vehicle> {

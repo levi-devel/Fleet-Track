@@ -1,8 +1,10 @@
 import { useState } from "react";
-import { Search, Truck, MapPin, Gauge, AlertTriangle, Signal, SignalZero } from "lucide-react";
+import { Search, Truck, MapPin, Gauge, AlertTriangle, Signal, SignalZero, Plus } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { VehicleFormModal } from "@/components/vehicle-form-modal";
 import { cn } from "@/lib/utils";
 import type { Vehicle } from "@shared/schema";
 
@@ -18,6 +20,7 @@ interface VehicleListProps {
 export function VehicleList({ vehicles, selectedVehicleId, onSelectVehicle, isLoading }: VehicleListProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeFilter, setActiveFilter] = useState<FilterType>("all");
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   const filters: { key: FilterType; label: string; count: number }[] = [
     { key: "all", label: "Todos", count: vehicles.length },
@@ -98,15 +101,25 @@ export function VehicleList({ vehicles, selectedVehicleId, onSelectVehicle, isLo
   return (
     <div className="flex flex-col h-full">
       <div className="p-4 space-y-4 border-b border-sidebar-border">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar veículo..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
-            data-testid="input-search-vehicle"
-          />
+        <div className="flex items-center gap-2">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Buscar veículo..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9"
+              data-testid="input-search-vehicle"
+            />
+          </div>
+          <Button
+            size="icon"
+            onClick={() => setIsModalOpen(true)}
+            data-testid="button-new-vehicle"
+            title="Adicionar veículo"
+          >
+            <Plus className="h-4 w-4" />
+          </Button>
         </div>
         
         <div className="flex flex-wrap gap-2">
@@ -194,6 +207,11 @@ export function VehicleList({ vehicles, selectedVehicleId, onSelectVehicle, isLo
           )}
         </div>
       </ScrollArea>
+
+      <VehicleFormModal
+        open={isModalOpen}
+        onOpenChange={setIsModalOpen}
+      />
     </div>
   );
 }

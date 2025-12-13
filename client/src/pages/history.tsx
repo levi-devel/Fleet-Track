@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSearch } from "wouter";
 import { MapContainer, TileLayer, Polyline, Marker, Popup } from "react-leaflet";
@@ -6,9 +6,9 @@ import L from "leaflet";
 import { 
   Calendar as CalendarIcon, Clock, MapPin, Gauge, 
   Route, Timer, PauseCircle, TrendingUp, Download,
-  Flag, CheckCircle2, AlertTriangle, Shield, Play
+  Flag, CheckCircle2, AlertTriangle, Shield, Play, Navigation
 } from "lucide-react";
-import { format, subDays, startOfDay, endOfDay } from "date-fns";
+import { format, subDays, startOfDay, endOfDay, setHours, setMinutes } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,18 +52,98 @@ export default function History() {
     from: startOfDay(new Date()),
     to: endOfDay(new Date()),
   });
+  const [startTime, setStartTime] = useState<string>("00:00");
+  const [endTime, setEndTime] = useState<string>("23:59");
   const [selectedEvent, setSelectedEvent] = useState<RouteEvent | null>(null);
+  const [lastAddresses, setLastAddresses] = useState<{ address: string; time: string; lat: number; lng: number }[]>([]);
+  const [isLoadingAddresses, setIsLoadingAddresses] = useState(false);
+
+  // Combina data com hora para criar o intervalo completo
+  const getDateTimeRange = () => {
+    const [startHour, startMin] = startTime.split(":").map(Number);
+    const [endHour, endMin] = endTime.split(":").map(Number);
+    
+    const fromDateTime = setMinutes(setHours(dateRange.from, startHour), startMin);
+    const toDateTime = setMinutes(setHours(dateRange.to, endHour), endMin);
+    
+    return { from: fromDateTime, to: toDateTime };
+  };
+
+  const dateTimeRange = getDateTimeRange();
 
   const { data: vehicles = [], isLoading: isLoadingVehicles } = useQuery<Vehicle[]>({
     queryKey: ["/api/vehicles"],
   });
 
+  const tripsQueryUrl = `/api/trips?vehicleId=${selectedVehicleId}&startDate=${dateTimeRange.from.toISOString()}&endDate=${dateTimeRange.to.toISOString()}`;
+  
   const { data: trips = [], isLoading: isLoadingTrips } = useQuery<Trip[]>({
-    queryKey: ["/api/trips", selectedVehicleId, dateRange.from.toISOString(), dateRange.to.toISOString()],
+    queryKey: [tripsQueryUrl],
     enabled: !!selectedVehicleId,
   });
 
   const selectedTrip = trips[0];
+
+  // Buscar endereços dos últimos 5 pontos via geocodificação reversa
+  useEffect(() => {
+    if (!selectedTrip?.points || selectedTrip.points.length === 0) {
+      setLastAddresses([]);
+      return;
+    }
+
+    const fetchAddresses = async () => {
+      setIsLoadingAddresses(true);
+      
+      // Pegar os últimos 5 pontos únicos (evitar pontos muito próximos)
+      const uniquePoints: typeof selectedTrip.points = [];
+      const pointsReversed = [...selectedTrip.points].reverse();
+      
+      for (const point of pointsReversed) {
+        if (uniquePoints.length >= 5) break;
+        
+        const isDuplicate = uniquePoints.some(p => 
+          Math.abs(p.latitude - point.latitude) < 0.0005 && 
+          Math.abs(p.longitude - point.longitude) < 0.0005
+        );
+        
+        if (!isDuplicate) {
+          uniquePoints.push(point);
+        }
+      }
+
+      const addresses: { address: string; time: string; lat: number; lng: number }[] = [];
+
+      for (const point of uniquePoints) {
+        try {
+          const response = await fetch(
+            `https://nominatim.openstreetmap.org/reverse?format=json&lat=${point.latitude}&lon=${point.longitude}&zoom=18&addressdetails=1`,
+            { headers: { "Accept-Language": "pt-BR" } }
+          );
+          
+          if (response.ok) {
+            const data = await response.json();
+            const address = data.display_name || "Endereço não encontrado";
+            addresses.push({
+              address: address.split(",").slice(0, 3).join(", "),
+              time: format(new Date(point.timestamp), "HH:mm", { locale: ptBR }),
+              lat: point.latitude,
+              lng: point.longitude,
+            });
+          }
+          
+          // Delay para respeitar rate limit do Nominatim
+          await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (error) {
+          console.error("Erro ao buscar endereço:", error);
+        }
+      }
+
+      setLastAddresses(addresses);
+      setIsLoadingAddresses(false);
+    };
+
+    fetchAddresses();
+  }, [selectedTrip?.id]);
 
   const quickFilters = [
     { label: "Hoje", days: 0 },
@@ -164,6 +244,25 @@ export default function History() {
                 />
               </PopoverContent>
             </Popover>
+
+            <div className="flex items-center gap-2">
+              <Clock className="h-4 w-4 text-muted-foreground" />
+              <input
+                type="time"
+                value={startTime}
+                onChange={(e) => setStartTime(e.target.value)}
+                className="px-2 py-1.5 rounded-md border border-input bg-background text-sm"
+                data-testid="input-start-time"
+              />
+              <span className="text-muted-foreground">até</span>
+              <input
+                type="time"
+                value={endTime}
+                onChange={(e) => setEndTime(e.target.value)}
+                className="px-2 py-1.5 rounded-md border border-input bg-background text-sm"
+                data-testid="input-end-time"
+              />
+            </div>
 
             <div className="flex gap-2">
               {quickFilters.map(filter => (
@@ -361,7 +460,52 @@ export default function History() {
               </div>
             </div>
 
-            <div className="flex-1 flex flex-col min-h-0">
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* Últimos 5 Endereços */}
+              <div className="px-4 py-3 border-b border-sidebar-border">
+                <h3 className="font-medium flex items-center gap-2">
+                  <Navigation className="h-4 w-4" />
+                  Últimos Endereços
+                </h3>
+              </div>
+              <div className="p-4 border-b border-sidebar-border">
+                {isLoadingAddresses ? (
+                  <div className="space-y-2">
+                    {[1, 2, 3, 4, 5].map(i => (
+                      <Skeleton key={i} className="h-12 w-full" />
+                    ))}
+                  </div>
+                ) : lastAddresses.length > 0 ? (
+                  <div className="space-y-2">
+                    {lastAddresses.map((item, index) => (
+                      <div
+                        key={index}
+                        className="p-2 rounded-md bg-card hover:bg-sidebar-accent transition-colors"
+                      >
+                        <div className="flex items-start gap-2">
+                          <div className="flex-shrink-0 w-6 h-6 rounded-full bg-primary/10 flex items-center justify-center">
+                            <span className="text-xs font-bold text-primary">{index + 1}</span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm truncate" title={item.address}>
+                              {item.address}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.time} • {item.lat.toFixed(4)}, {item.lng.toFixed(4)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    Nenhum endereço disponível
+                  </p>
+                )}
+              </div>
+
+              {/* Eventos do Trajeto */}
               <div className="px-4 py-3 border-b border-sidebar-border">
                 <h3 className="font-medium">Eventos do Trajeto</h3>
               </div>

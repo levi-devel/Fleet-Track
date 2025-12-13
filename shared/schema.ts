@@ -148,6 +148,20 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Tabela: vehicle_location_history
+export const vehicleLocationHistory = pgTable("vehicle_location_history", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  vehicleId: uuid("vehicle_id").notNull().references(() => vehicles.id, { onDelete: "cascade" }),
+  latitude: real("latitude").notNull(),
+  longitude: real("longitude").notNull(),
+  speed: integer("speed").notNull().default(0),
+  heading: integer("heading").notNull().default(0),
+  status: vehicleStatusEnum("status").notNull(),
+  ignition: ignitionStatusEnum("ignition").notNull(),
+  accuracy: real("accuracy"),
+  recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // ============================================
 // RELATIONS
 // ============================================
@@ -168,6 +182,13 @@ export const routeEventsRelations = relations(routeEvents, ({ one }) => ({
   trip: one(trips, {
     fields: [routeEvents.tripId],
     references: [trips.id],
+  }),
+}));
+
+export const vehicleLocationHistoryRelations = relations(vehicleLocationHistory, ({ one }) => ({
+  vehicle: one(vehicles, {
+    fields: [vehicleLocationHistory.vehicleId],
+    references: [vehicles.id],
   }),
 }));
 
@@ -349,3 +370,13 @@ export const insertUserSchema = z.object({
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = { id: string; username: string; password: string };
+
+// Tracking data schema (para receber dados de rastreadores)
+export const trackingDataSchema = z.object({
+  licensePlate: z.string().min(1, "Placa é obrigatória"),
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  speed: z.number().min(0),
+});
+
+export type TrackingData = z.infer<typeof trackingDataSchema>;

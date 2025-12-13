@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { insertVehicleSchema, insertGeofenceSchema, insertAlertSchema } from "@shared/schema";
+import { insertVehicleSchema, insertGeofenceSchema, insertAlertSchema, trackingDataSchema } from "@shared/schema";
 
 const clients = new Set<WebSocket>();
 
@@ -103,6 +103,55 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete vehicle" });
+    }
+  });
+
+  // Endpoint de rastreamento - recebe dados de localização do veículo
+  app.post("/api/tracking", async (req, res) => {
+    try {
+      // 1. Validar dados de entrada
+      const parsed = trackingDataSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ 
+          error: "Invalid tracking data", 
+          details: parsed.error.errors 
+        });
+      }
+
+      const { licensePlate, latitude, longitude, speed } = parsed.data;
+
+      // 2. Buscar veículo pela placa
+      const vehicle = await storage.getVehicleByPlate(licensePlate);
+      if (!vehicle) {
+        return res.status(404).json({ 
+          error: "Vehicle not found",
+          message: `Nenhum veículo encontrado com a placa: ${licensePlate}`
+        });
+      }
+
+      // 3. Determinar status baseado na velocidade
+      const status = speed > 0 ? "moving" : "stopped";
+      const ignition = speed > 0 ? "on" : vehicle.ignition;
+
+      // 4. Atualizar veículo com nova localização
+      const updatedVehicle = await storage.updateVehicle(vehicle.id, {
+        latitude,
+        longitude,
+        currentSpeed: speed,
+        status,
+        ignition,
+        lastUpdate: new Date().toISOString(),
+      });
+
+      // 5. Retornar veículo atualizado
+      res.json({
+        success: true,
+        message: "Localização atualizada com sucesso",
+        vehicle: updatedVehicle,
+      });
+    } catch (error) {
+      console.error("Erro ao processar dados de rastreamento:", error);
+      res.status(500).json({ error: "Failed to process tracking data" });
     }
   });
 
