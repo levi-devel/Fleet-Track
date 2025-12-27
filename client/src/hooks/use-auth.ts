@@ -13,6 +13,7 @@ interface AuthState {
   session: Session | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  error: string | null;
 }
 
 interface AuthContextValue extends AuthState {
@@ -23,6 +24,9 @@ interface AuthContextValue extends AuthState {
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+// Timeout para evitar carregamento infinito (10 segundos)
+const AUTH_TIMEOUT_MS = 10000;
 
 export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
@@ -38,6 +42,7 @@ export function useAuthProvider(): AuthContextValue {
     session: null,
     isLoading: true,
     isAuthenticated: false,
+    error: null,
   });
 
   // Carrega sessão inicial
@@ -50,43 +55,110 @@ export function useAuthProvider(): AuthContextValue {
         session: null,
         isLoading: false,
         isAuthenticated: true, // Permite acesso sem login
+        error: null,
       });
       return;
     }
 
+    let mounted = true;
+
     const initAuth = async () => {
+      console.log('[Auth] Iniciando verificação de sessão...');
+      const startTime = Date.now();
+
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        // Promise para obter sessão
+        const sessionPromise = supabase.auth.getSession();
         
+        // Promise de timeout
+        const timeoutPromise = new Promise<{ timeout: true }>((resolve) => {
+          setTimeout(() => resolve({ timeout: true }), AUTH_TIMEOUT_MS);
+        });
+
+        // Race entre obter sessão e timeout
+        const result = await Promise.race([sessionPromise, timeoutPromise]);
+
+        if ('timeout' in result) {
+          throw new Error('Tempo limite excedido ao tentar restaurar sessão');
+        }
+
+        const { data, error: sessionError } = result;
+
+        if (sessionError) {
+          throw sessionError;
+        }
+
+        const session = data.session;
+
         if (session?.user) {
-          // Busca perfil do usuário
-          const { data: profile } = await supabase
-            .from('profiles')
-            .select('username')
-            .eq('id', session.user.id)
-            .single();
+          console.log('[Auth] Sessão encontrada para usuário:', session.user.id);
           
-          setState({
-            user: {
-              id: session.user.id,
-              email: session.user.email,
-              username: profile?.username,
-            },
-            session,
-            isLoading: false,
-            isAuthenticated: true,
-          });
+          // Busca perfil do usuário
+          // Envolvemos em try/catch para que falha no perfil não impeça login
+          let profile = null;
+          try {
+             const { data: profileData, error: profileError } = await supabase
+              .from('profiles')
+              .select('username')
+              .eq('id', session.user.id)
+              .single();
+              
+              if (profileError) {
+                console.warn('[Auth] Erro ao buscar perfil:', profileError);
+              } else {
+                profile = profileData;
+              }
+          } catch (err) {
+             console.warn('[Auth] Falha na requisição de perfil:', err);
+          }
+          
+          if (mounted) {
+            setState({
+              user: {
+                id: session.user.id,
+                email: session.user.email,
+                username: profile?.username,
+              },
+              session,
+              isLoading: false,
+              isAuthenticated: true,
+              error: null,
+            });
+            console.log(`[Auth] Autenticação concluída em ${Date.now() - startTime}ms`);
+          }
         } else {
+          console.log('[Auth] Nenhuma sessão ativa encontrada');
+          if (mounted) {
+            setState({
+              user: null,
+              session: null,
+              isLoading: false,
+              isAuthenticated: false,
+              error: null,
+            });
+          }
+        }
+      } catch (error: any) {
+        console.error('[Auth] Erro crítico ao inicializar autenticação:', error);
+        
+        // Em caso de erro crítico, forçamos logout para limpar estado inválido
+        // mas mantemos a mensagem de erro visível se possível ou apenas redirecionamos
+        if (mounted) {
           setState({
             user: null,
             session: null,
             isLoading: false,
             isAuthenticated: false,
+            error: error.message || 'Falha ao restaurar sessão',
           });
+          
+          // Tentativa de limpar dados locais que podem estar corrompidos
+          try {
+             await supabase.auth.signOut();
+          } catch (e) {
+             console.error('[Auth] Erro ao forçar signOut após falha:', e);
+          }
         }
-      } catch (error) {
-        console.error('Error initializing auth:', error);
-        setState(prev => ({ ...prev, isLoading: false }));
       }
     };
 
@@ -95,32 +167,46 @@ export function useAuthProvider(): AuthContextValue {
     // Escuta mudanças na autenticação
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
+        console.log(`[Auth] Mudança de estado: ${event}`, session?.user?.id);
+        
         if (event === 'SIGNED_IN' && session?.user) {
+          // Apenas busca perfil se realmente mudou o usuário ou é um novo login
+          // Para evitar requisições desnecessárias, poderíamos checar se o usuário atual é diferente
+          // mas por segurança e simplicidade, atualizamos.
+          
           const { data: profile } = await supabase
             .from('profiles')
             .select('username')
             .eq('id', session.user.id)
             .single();
           
-          setState({
-            user: {
-              id: session.user.id,
-              email: session.user.email,
-              username: profile?.username,
-            },
-            session,
-            isLoading: false,
-            isAuthenticated: true,
-          });
+          if (mounted) {
+            setState({
+              user: {
+                id: session.user.id,
+                email: session.user.email,
+                username: profile?.username,
+              },
+              session,
+              isLoading: false,
+              isAuthenticated: true,
+              error: null,
+            });
+          }
         } else if (event === 'SIGNED_OUT') {
-          setState({
-            user: null,
-            session: null,
-            isLoading: false,
-            isAuthenticated: false,
-          });
+          if (mounted) {
+            setState({
+              user: null,
+              session: null,
+              isLoading: false,
+              isAuthenticated: false,
+              error: null,
+            });
+          }
         } else if (event === 'TOKEN_REFRESHED' && session) {
-          setState(prev => ({ ...prev, session }));
+          if (mounted) {
+            setState(prev => ({ ...prev, session }));
+          }
         }
       }
     );

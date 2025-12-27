@@ -620,6 +620,10 @@ async function createStorage(): Promise<IStorage> {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   
+  // #region agent log
+  fetch('http://127.0.0.1:7242/ingest/c8f2aa62-da2a-4442-b8d5-cb9e09f709d3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'storage.ts:625',message:'Storage initialization',data:{hasSupabaseUrl:!!supabaseUrl,hasSupabaseKey:!!supabaseKey,storageType:supabaseUrl&&supabaseKey?'SupabaseStorage':'MemStorage'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'C'})}).catch(()=>{});
+  // #endregion
+  
   if (supabaseUrl && supabaseKey) {
     console.log('🚀 Using Supabase storage');
     // Dynamic import para evitar erro quando Supabase não está configurado

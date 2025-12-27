@@ -23,6 +23,9 @@ export function registerTrackingRoutes(app: Express): void {
    * Recebe dados de localização de um veículo e atualiza no sistema
    */
   app.post('/api/tracking', validateApiKey, async (req, res) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/c8f2aa62-da2a-4442-b8d5-cb9e09f709d3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tracking-routes.ts:27',message:'Tracking endpoint called',data:{body:req.body},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     try {
       // Valida os dados recebidos
       const parsed = trackingDataSchema.safeParse(req.body);
@@ -61,6 +64,10 @@ export function registerTrackingRoutes(app: Express): void {
         lastUpdate: new Date().toISOString(),
       });
 
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/c8f2aa62-da2a-4442-b8d5-cb9e09f709d3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'tracking-routes.ts:65',message:'Vehicle updated - NO HISTORY SAVED',data:{vehicleId:vehicle.id,lat:latitude,lng:longitude,speed,hasAddLocationHistoryMethod:typeof (storage as any).addLocationHistory === 'function'},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'B'})}).catch(()=>{});
+      // #endregion
+
       return res.status(200).json({
         success: true,
         message: 'Localização atualizada com sucesso',
@@ -84,3 +91,4 @@ export function registerTrackingRoutes(app: Express): void {
     }
   });
 }
+

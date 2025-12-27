@@ -245,6 +245,11 @@ export async function registerRoutes(
       const end = endDate ? String(endDate) : new Date().toISOString();
       
       const trips = await storage.getTrips(vehicleId, start, end);
+      
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/c8f2aa62-da2a-4442-b8d5-cb9e09f709d3',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'routes.ts:250',message:'getTrips called',data:{vehicleId,startDate:start,endDate:end,tripsCount:trips.length,firstTripPointsCount:trips[0]?.points?.length||0,storageConstructorName:storage.constructor.name},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'E'})}).catch(()=>{});
+      // #endregion
+      
       res.json(trips);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch trips" });
