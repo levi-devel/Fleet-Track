@@ -25,7 +25,7 @@ type VehicleUpdateCallback = (vehicles: Vehicle[]) => void;
 export interface IStorage {
   getVehicles(): Promise<Vehicle[]>;
   getVehicle(id: string): Promise<Vehicle | undefined>;
-  getVehicleByPlate(licensePlate: string): Promise<Vehicle | undefined>;
+  getVehicleByLicensePlate(licensePlate: string): Promise<Vehicle | undefined>;
   createVehicle(vehicle: InsertVehicle): Promise<Vehicle>;
   updateVehicle(id: string, updates: Partial<Vehicle>): Promise<Vehicle | undefined>;
   deleteVehicle(id: string): Promise<boolean>;
@@ -1236,8 +1236,10 @@ export class MemStorage implements IStorage {
     return this.vehicles.get(id);
   }
 
-  async getVehicleByPlate(licensePlate: string): Promise<Vehicle | undefined> {
-    return Array.from(this.vehicles.values()).find(v => v.licensePlate === licensePlate);
+  async getVehicleByLicensePlate(licensePlate: string): Promise<Vehicle | undefined> {
+    return Array.from(this.vehicles.values()).find(
+      (v) => v.licensePlate.toLowerCase() === licensePlate.toLowerCase(),
+    );
   }
 
   async createVehicle(vehicle: InsertVehicle): Promise<Vehicle> {
@@ -1358,17 +1360,28 @@ export class MemStorage implements IStorage {
   }
 }
 
-// ============================================
-// FACTORY FUNCTION
-// ============================================
 
-function createStorage(): IStorage {
-  if (isDatabaseConfigured()) {
-    console.log("✅ Usando Supabase Storage (PostgreSQL)");
+// Exporta SupabaseStorage se configurado, senão MemStorage para desenvolvimento
+async function createStorage(): Promise<IStorage> {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (supabaseUrl && supabaseKey) {
+    console.log("🚀 Using Supabase storage");
+    // Dynamic import para evitar erro quando Supabase não está configurado
+    const { SupabaseStorage } = await import("./supabase-storage");
     return new SupabaseStorage();
   }
-  console.log("⚠️ Usando MemStorage (desenvolvimento)");
+
+  console.log("📦 Using in-memory storage (Supabase not configurado)");
   return new MemStorage();
 }
 
-export const storage = createStorage();
+// Inicializa o storage de forma assíncrona
+let storage: IStorage;
+
+const initPromise = createStorage().then((s) => {
+  storage = s;
+});
+
+export { storage, initPromise };

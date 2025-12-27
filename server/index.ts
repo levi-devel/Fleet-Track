@@ -1,6 +1,9 @@
+// Carrega as variáveis de ambiente primeiro (antes de qualquer import)
 import "dotenv/config";
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
+import { registerAuthRoutes } from "./auth-routes";
+import { registerTrackingRoutes } from "./tracking-routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 
@@ -61,6 +64,24 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Aguarda inicialização do storage
+  const { initPromise } = await import('./storage');
+  await initPromise;
+  
+  // Registra rotas de autenticação (apenas se Supabase configurado)
+  if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    registerAuthRoutes(app);
+    log('Auth routes registered (Supabase configured)');
+  }
+  
+  // Registra rotas de rastreamento (requer TRACKING_API_KEY)
+  if (process.env.TRACKING_API_KEY) {
+    registerTrackingRoutes(app);
+    log('Tracking routes registered');
+  } else {
+    log('Tracking routes disabled (TRACKING_API_KEY not set)');
+  }
+  
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -86,14 +107,7 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
-  httpServer.listen(
-    {
-      port,
-      host: "0.0.0.0",
-      reusePort: true,
-    },
-    () => {
-      log(`serving on port ${port}`);
-    },
-  );
+  httpServer.listen(port, "0.0.0.0", () => {
+    log(`serving on port ${port}`);
+  });
 })();

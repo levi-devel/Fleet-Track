@@ -386,7 +386,7 @@ export const insertUserSchema = z.object({
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = { id: string; username: string; password: string };
 
-// Tracking data schema (para receber dados de rastreadores)
+// Schema para dados de rastreamento recebidos via API
 export const trackingDataSchema = z.object({
   licensePlate: z.string().min(1, "Placa é obrigatória"),
   latitude: z.number().min(-90).max(90),

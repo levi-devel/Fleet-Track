@@ -221,7 +221,7 @@ export default function GeofencesPage() {
     createMutation.mutate(formData);
   };
 
-  const handleEditSubmit = () => {
+  const handleUpdateSubmit = () => {
     if (!editingGeofence) return;
     if (!formData.name) {
       toast({ title: "Erro", description: "Digite um nome para a geofence.", variant: "destructive" });
@@ -244,7 +244,7 @@ export default function GeofencesPage() {
       description: geofence.description || "",
       type: geofence.type,
       active: geofence.active,
-      center: geofence.center || undefined,
+      center: geofence.center ?? undefined,
       radius: geofence.radius || 500,
       points: geofence.points || [],
       rules: geofence.rules.length > 0 ? geofence.rules : [
@@ -630,7 +630,7 @@ export default function GeofencesPage() {
       </Dialog>
 
       {/* Dialog de Edição */}
-      <Dialog open={!!editingGeofence} onOpenChange={(open) => { if (!open) { setEditingGeofence(null); resetForm(); } }}>
+      <Dialog open={editingGeofence !== null} onOpenChange={(open) => { if (!open) { setEditingGeofence(null); resetForm(); } }}>
         <DialogContent className="max-w-4xl h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Editar Geofence</DialogTitle>
@@ -798,13 +798,13 @@ export default function GeofencesPage() {
           <DialogFooter>
             <p className="text-xs text-muted-foreground mr-auto">
               {formData.type === "circle" 
-                ? "Clique no mapa para redefinir o centro da área circular"
+                ? "Clique no mapa para definir o centro da área circular"
                 : "Clique no mapa para adicionar pontos do polígono"}
             </p>
             <Button variant="outline" onClick={() => { setEditingGeofence(null); resetForm(); }}>
               Cancelar
             </Button>
-            <Button onClick={handleEditSubmit} disabled={updateMutation.isPending} data-testid="button-update-geofence">
+            <Button onClick={handleUpdateSubmit} disabled={updateMutation.isPending} data-testid="button-update-geofence">
               {updateMutation.isPending ? "Salvando..." : "Salvar Alterações"}
             </Button>
           </DialogFooter>

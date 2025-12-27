@@ -21,28 +21,41 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
 
-  const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+  // Só inicia WebSocket se Supabase NÃO estiver configurado
+  // Quando Supabase está configurado, usamos Supabase Realtime no frontend
+  const useSupabaseRealtime = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (!useSupabaseRealtime) {
+    const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-  storage.onVehicleUpdate(broadcastVehicles);
+    // Só registra callback se storage for MemStorage (tem método onVehicleUpdate)
+    if ('onVehicleUpdate' in storage) {
+      (storage as any).onVehicleUpdate(broadcastVehicles);
+    }
 
-  wss.on("connection", (ws) => {
-    clients.add(ws);
-    console.log("WebSocket client connected");
+    wss.on("connection", (ws) => {
+      clients.add(ws);
+      console.log("WebSocket client connected");
 
-    storage.getVehicles().then(vehicles => {
-      ws.send(JSON.stringify({ type: "vehicles", data: vehicles }));
+      storage.getVehicles().then(vehicles => {
+        ws.send(JSON.stringify({ type: "vehicles", data: vehicles }));
+      });
+
+      ws.on("close", () => {
+        clients.delete(ws);
+        console.log("WebSocket client disconnected");
+      });
+
+      ws.on("error", (error) => {
+        console.error("WebSocket error:", error);
+        clients.delete(ws);
+      });
     });
-
-    ws.on("close", () => {
-      clients.delete(ws);
-      console.log("WebSocket client disconnected");
-    });
-
-    ws.on("error", (error) => {
-      console.error("WebSocket error:", error);
-      clients.delete(ws);
-    });
-  });
+    
+    console.log("WebSocket server started (Supabase not configured)");
+  } else {
+    console.log("Using Supabase Realtime (WebSocket disabled)");
+  }
 
   app.get("/api/vehicles", async (req, res) => {
     try {
@@ -121,7 +134,7 @@ export async function registerRoutes(
       const { licensePlate, latitude, longitude, speed } = parsed.data;
 
       // 2. Buscar veículo pela placa
-      const vehicle = await storage.getVehicleByPlate(licensePlate);
+      const vehicle = await storage.getVehicleByLicensePlate(licensePlate);
       if (!vehicle) {
         return res.status(404).json({ 
           error: "Vehicle not found",
@@ -274,17 +287,18 @@ export async function registerRoutes(
       const { vehicleId, startDate, endDate } = req.query;
       const start = startDate ? String(startDate) : new Date().toISOString();
       const end = endDate ? String(endDate) : new Date().toISOString();
-      
+
       if (!vehicleId || typeof vehicleId !== "string" || vehicleId === "all") {
         const allVehicles = await storage.getVehicles();
         const tripsByVehicle = await Promise.all(
-          allVehicles.map(v => storage.getTrips(v.id, start, end))
+          allVehicles.map((v) => storage.getTrips(v.id, start, end)),
         );
         const flattened = tripsByVehicle.flat();
         return res.json(flattened);
       }
-      
+
       const trips = await storage.getTrips(String(vehicleId), start, end);
+
       res.json(trips);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch trips" });
