@@ -66,7 +66,7 @@ export default function Dashboard() {
 
   return (
     <div className="flex h-full" data-testid="dashboard-page">
-      <div className="w-80 flex-shrink-0 border-r border-sidebar-border bg-sidebar">
+      <div className="w-80 flex-shrink-0 border-r border-sidebar-border bg-sidebar z-10">
         <VehicleList
           vehicles={vehicles}
           selectedVehicleId={selectedVehicle?.id}
@@ -75,7 +75,7 @@ export default function Dashboard() {
         />
       </div>
       
-      <div className="flex-1 relative">
+      <div className="flex-1 relative min-w-0">
         <FleetMap
           vehicles={vehicles}
           geofences={geofences}

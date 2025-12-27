@@ -8,6 +8,7 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { 
   Map, History, Shield, Bell, BarChart3, Truck
 } from "lucide-react";
@@ -24,6 +25,27 @@ import type { Alert } from "@shared/schema";
 
 function Navigation() {
   const [location] = useLocation();
+  // #region agent log
+  const imgRef = useRef<HTMLImageElement>(null);
+  const headerRef = useRef<HTMLElement>(null);
+  
+  useEffect(() => {
+    const logData = () => {
+      const img = imgRef.current;
+      const header = headerRef.current;
+      if (img && header) {
+        const imgStyles = window.getComputedStyle(img);
+        const headerStyles = window.getComputedStyle(header);
+        fetch('http://127.0.0.1:7242/ingest/3d248e52-db19-44a0-890d-a6b6286cb907',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'App.tsx:Navigation',message:'Logo dimensions analysis',data:{hypothesisA_headerHeight: header.clientHeight,hypothesisB_imgNaturalWidth: img.naturalWidth,hypothesisB_imgNaturalHeight: img.naturalHeight,hypothesisB_imgAspectRatio: img.naturalWidth / img.naturalHeight,hypothesisC_imgRenderedWidth: img.clientWidth,hypothesisC_imgRenderedHeight: img.clientHeight,hypothesisD_headerPadding: headerStyles.padding,hypothesisE_imgMaxWidth: imgStyles.maxWidth,hypothesisE_imgMaxHeight: imgStyles.maxHeight,cssHeight: imgStyles.height,cssWidth: imgStyles.width,objectFit: imgStyles.objectFit},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'A-B-C-D-E'})}).catch(()=>{});
+      }
+    };
+    const img = imgRef.current;
+    if (img) {
+      if (img.complete) logData();
+      else img.onload = logData;
+    }
+  }, []);
+  // #endregion
   
   const { data: alerts = [] } = useQuery<Alert[]>({
     queryKey: ["/api/alerts"],
@@ -41,12 +63,13 @@ function Navigation() {
   ];
 
   return (
-    <header className="h-16 border-b border-border bg-card flex items-center px-6 gap-6 sticky top-0 z-50">
+    <header ref={headerRef} className="h-24 border-b border-border bg-card flex items-center px-6 gap-6 sticky top-0 z-50">
       <Link href="/" className="flex items-center gap-2">
         <img 
+          ref={imgRef}
           src="/3783db29-8eec-4649-ab40-b8817ae0c11a.png" 
           alt="FleetTrack" 
-          className="h-14 w-auto object-contain dark:invert"
+          className="h-20 w-auto object-contain dark:invert"
         />
       </Link>
       

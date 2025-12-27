@@ -47,7 +47,7 @@ export default function History() {
   const searchParams = new URLSearchParams(useSearch());
   const vehicleIdParam = searchParams.get("vehicleId");
 
-  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(vehicleIdParam || "");
+  const [selectedVehicleId, setSelectedVehicleId] = useState<string>(vehicleIdParam || "all");
   const [dateRange, setDateRange] = useState<{ from: Date; to: Date }>({
     from: startOfDay(new Date()),
     to: endOfDay(new Date()),
@@ -75,51 +75,92 @@ export default function History() {
     queryKey: ["/api/vehicles"],
   });
 
-  const tripsQueryUrl = `/api/trips?vehicleId=${selectedVehicleId}&startDate=${dateTimeRange.from.toISOString()}&endDate=${dateTimeRange.to.toISOString()}`;
+  const isGeneralView = selectedVehicleId === "all";
+  const tripsQueryUrl = isGeneralView
+    ? `/api/trips?startDate=${dateTimeRange.from.toISOString()}&endDate=${dateTimeRange.to.toISOString()}`
+    : `/api/trips?vehicleId=${selectedVehicleId}&startDate=${dateTimeRange.from.toISOString()}&endDate=${dateTimeRange.to.toISOString()}`;
   
   const { data: trips = [], isLoading: isLoadingTrips } = useQuery<Trip[]>({
     queryKey: [tripsQueryUrl],
-    enabled: !!selectedVehicleId,
   });
 
-  const selectedTrip = trips[0];
+  const selectedTrip = isGeneralView ? undefined : trips[0];
+
+  const aggregatedSummary = useMemo(() => {
+    try {
+      if (!isGeneralView || !trips || trips.length === 0) return null;
+      const totalDistance = trips.reduce((sum, t) => sum + (t.totalDistance || 0), 0);
+      const travelTime = trips.reduce((sum, t) => sum + (t.travelTime || 0), 0);
+      const stoppedTime = trips.reduce((sum, t) => sum + (t.stoppedTime || 0), 0);
+      const maxSpeed = trips.reduce((max, t) => Math.max(max, t.maxSpeed || 0), 0);
+      const stopsCount = trips.reduce((sum, t) => sum + (t.stopsCount || 0), 0);
+      const weightedAvgSpeed = travelTime > 0
+        ? Math.round(
+            trips.reduce((acc, t) => acc + (t.averageSpeed || 0) * (t.travelTime || 0), 0) / travelTime
+          )
+        : 0;
+      const startTime = trips.reduce<string | null>((min, t) => {
+        if (!t.startTime) return min;
+        const ts = new Date(t.startTime).toISOString();
+        if (min === null || ts < min) return ts;
+        return min;
+      }, null);
+      const endTime = trips.reduce<string | null>((max, t) => {
+        if (!t.endTime) return max;
+        const ts = new Date(t.endTime).toISOString();
+        if (max === null || ts > max) return ts;
+        return max;
+      }, null);
+      const allEvents = trips.flatMap(t => t.events || []).sort((a, b) => {
+        return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
+      });
+      const allPoints = trips.flatMap(t => t.points || []);
+      return {
+        totalDistance,
+        travelTime,
+        stoppedTime,
+        averageSpeed: weightedAvgSpeed,
+        maxSpeed,
+        stopsCount,
+        startTime,
+        endTime,
+        events: allEvents,
+        points: allPoints,
+      };
+    } catch (error) {
+      console.error("Erro ao calcular resumo agregado:", error);
+      return null;
+    }
+  }, [isGeneralView, trips]);
 
   // Buscar endereços dos últimos 5 pontos via geocodificação reversa
   useEffect(() => {
-    if (!selectedTrip?.points || selectedTrip.points.length === 0) {
+    const pointsSource = isGeneralView ? aggregatedSummary?.points ?? [] : selectedTrip?.points ?? [];
+    if (!pointsSource || pointsSource.length === 0) {
       setLastAddresses([]);
       return;
     }
-
     const fetchAddresses = async () => {
       setIsLoadingAddresses(true);
-      
-      // Pegar os últimos 5 pontos únicos (evitar pontos muito próximos)
-      const uniquePoints: typeof selectedTrip.points = [];
-      const pointsReversed = [...selectedTrip.points].reverse();
-      
+      const uniquePoints = [] as typeof pointsSource;
+      const pointsReversed = [...pointsSource].reverse();
       for (const point of pointsReversed) {
         if (uniquePoints.length >= 5) break;
-        
-        const isDuplicate = uniquePoints.some(p => 
-          Math.abs(p.latitude - point.latitude) < 0.0005 && 
+        const isDuplicate = uniquePoints.some(p =>
+          Math.abs(p.latitude - point.latitude) < 0.0005 &&
           Math.abs(p.longitude - point.longitude) < 0.0005
         );
-        
         if (!isDuplicate) {
           uniquePoints.push(point);
         }
       }
-
       const addresses: { address: string; time: string; lat: number; lng: number }[] = [];
-
       for (const point of uniquePoints) {
         try {
           const response = await fetch(
             `https://nominatim.openstreetmap.org/reverse?format=json&lat=${point.latitude}&lon=${point.longitude}&zoom=18&addressdetails=1`,
             { headers: { "Accept-Language": "pt-BR" } }
           );
-          
           if (response.ok) {
             const data = await response.json();
             const address = data.display_name || "Endereço não encontrado";
@@ -130,20 +171,15 @@ export default function History() {
               lng: point.longitude,
             });
           }
-          
-          // Delay para respeitar rate limit do Nominatim
           await new Promise(resolve => setTimeout(resolve, 300));
         } catch (error) {
-          console.error("Erro ao buscar endereço:", error);
         }
       }
-
       setLastAddresses(addresses);
       setIsLoadingAddresses(false);
     };
-
     fetchAddresses();
-  }, [selectedTrip?.id]);
+  }, [isGeneralView, selectedTrip?.id, aggregatedSummary?.points]);
 
   const quickFilters = [
     { label: "Hoje", days: 0 },
@@ -195,16 +231,48 @@ export default function History() {
   };
 
   const routePositions = useMemo(() => {
+    if (isGeneralView) return [];
     if (!selectedTrip?.points) return [];
     return selectedTrip.points.map(p => [p.latitude, p.longitude] as [number, number]);
-  }, [selectedTrip]);
+  }, [selectedTrip, isGeneralView]);
+
+  const routesByTrip = useMemo(() => {
+    if (!isGeneralView) return [];
+    return trips.map(t => t.points.map(p => [p.latitude, p.longitude] as [number, number]));
+  }, [trips, isGeneralView]);
+
+  const samplePositions = (positions: [number, number][], maxPoints = 500) => {
+    if (positions.length <= maxPoints) return positions;
+    const step = Math.ceil(positions.length / maxPoints);
+    const sampled: [number, number][] = [];
+    for (let i = 0; i < positions.length; i += step) {
+      sampled.push(positions[i]);
+    }
+    sampled.push(positions[positions.length - 1]);
+    return sampled;
+  };
 
   const mapCenter = useMemo(() => {
-    if (routePositions.length > 0) {
-      return routePositions[Math.floor(routePositions.length / 2)];
+    try {
+      const positions = isGeneralView ? routesByTrip.flat() : routePositions;
+      if (positions && positions.length > 0) {
+        // Encontrar o centro da bounding box de todos os pontos
+        let minLat = 90, maxLat = -90, minLng = 180, maxLng = -180;
+        
+        positions.forEach(([lat, lng]) => {
+          if (lat < minLat) minLat = lat;
+          if (lat > maxLat) maxLat = lat;
+          if (lng < minLng) minLng = lng;
+          if (lng > maxLng) maxLng = lng;
+        });
+
+        return [(minLat + maxLat) / 2, (minLng + maxLng) / 2] as [number, number];
+      }
+    } catch (e) {
+      console.error("Erro ao calcular centro do mapa:", e);
     }
     return [-23.5505, -46.6333] as [number, number];
-  }, [routePositions]);
+  }, [routePositions, routesByTrip, isGeneralView]);
 
   return (
     <div className="flex h-full" data-testid="history-page">
@@ -213,9 +281,12 @@ export default function History() {
           <div className="flex flex-wrap items-center gap-4">
             <Select value={selectedVehicleId} onValueChange={setSelectedVehicleId}>
               <SelectTrigger className="w-[200px]" data-testid="select-vehicle">
-                <SelectValue placeholder="Selecione um veículo" />
+                <SelectValue placeholder="Todos os veículos" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem key="all" value="all">
+                  Todos os veículos
+                </SelectItem>
                 {vehicles.map(vehicle => (
                   <SelectItem key={vehicle.id} value={vehicle.id}>
                     {vehicle.name} - {vehicle.licensePlate}
@@ -231,7 +302,7 @@ export default function History() {
                   {format(dateRange.from, "dd/MM/yyyy", { locale: ptBR })} - {format(dateRange.to, "dd/MM/yyyy", { locale: ptBR })}
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-auto p-0" align="start">
+              <PopoverContent className="w-auto p-0 z-[1100]" align="start">
                 <Calendar
                   mode="range"
                   selected={{ from: dateRange.from, to: dateRange.to }}
@@ -285,24 +356,25 @@ export default function History() {
               </Button>
             )}
           </div>
+          <div className="mt-3 transition-all duration-300">
+            {isGeneralView ? (
+              <Badge variant="default" className="animate-in fade-in-50 slide-in-from-left-1">Visão Geral</Badge>
+            ) : (
+              (() => {
+                const v = vehicles.find(v => v.id === selectedVehicleId);
+                const label = v ? `${v.name} - ${v.licensePlate}` : "Filtrado por veículo";
+                return <Badge variant="outline" className="animate-in fade-in-50 slide-in-from-right-1">{label}</Badge>;
+              })()
+            )}
+          </div>
         </div>
 
         <div className="flex-1 relative">
-          {!selectedVehicleId ? (
-            <div className="flex items-center justify-center h-full bg-muted/30">
-              <div className="text-center">
-                <Route className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
-                <h3 className="text-lg font-medium mb-2">Selecione um veículo</h3>
-                <p className="text-sm text-muted-foreground">
-                  Escolha um veículo e período para visualizar o histórico de trajetos
-                </p>
-              </div>
-            </div>
-          ) : isLoadingTrips ? (
+          {isLoadingTrips ? (
             <div className="flex items-center justify-center h-full">
               <div className="animate-spin h-8 w-8 border-4 border-primary border-t-transparent rounded-full" />
             </div>
-          ) : !selectedTrip ? (
+          ) : (isGeneralView ? trips.length === 0 : !selectedTrip) ? (
             <div className="flex items-center justify-center h-full bg-muted/30">
               <div className="text-center">
                 <MapPin className="h-16 w-16 mx-auto text-muted-foreground/50 mb-4" />
@@ -314,77 +386,112 @@ export default function History() {
             </div>
           ) : (
             <MapContainer
+              key={isGeneralView ? "general" : selectedVehicleId || "filtered"}
               center={mapCenter}
-              zoom={13}
-              className="h-full w-full"
+              zoom={12}
+              className="h-full w-full transition-all duration-300"
               zoomControl={true}
             >
               <TileLayer
                 attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
-              
-              {routePositions.length > 1 && (
-                <Polyline
-                  positions={routePositions}
-                  pathOptions={{
-                    color: "#3b82f6",
-                    weight: 4,
-                    opacity: 0.8,
-                  }}
-                />
-              )}
-              
-              {routePositions.length > 0 && (
+              {isGeneralView ? (
                 <>
-                  <Marker position={routePositions[0]} icon={startIcon}>
-                    <Popup>
-                      <div className="text-sm">
-                        <div className="font-semibold text-green-600">Partida</div>
-                        <div>{format(new Date(selectedTrip.startTime), "dd/MM/yyyy HH:mm", { locale: ptBR })}</div>
-                      </div>
-                    </Popup>
-                  </Marker>
-                  <Marker position={routePositions[routePositions.length - 1]} icon={endIcon}>
-                    <Popup>
-                      <div className="text-sm">
-                        <div className="font-semibold text-red-600">Chegada</div>
-                        <div>{format(new Date(selectedTrip.endTime), "dd/MM/yyyy HH:mm", { locale: ptBR })}</div>
-                      </div>
-                    </Popup>
-                  </Marker>
+                  {routesByTrip.map((positions, idx) => (
+                    positions.length > 1 ? (
+                      <Polyline
+                        key={`route-${idx}`}
+                        positions={samplePositions(positions)}
+                        pathOptions={{
+                          color: ["#3b82f6", "#22c55e", "#ef4444", "#a855f7", "#f59e0b", "#06b6d4", "#84cc16", "#f43f5e"][idx % 8],
+                          weight: 3,
+                          opacity: 0.7,
+                        }}
+                      />
+                    ) : null
+                  ))}
+                  {trips.flatMap(t => t.events.filter(e => e.type === "stop")).map((event, index) => (
+                    <Marker
+                      key={event.id}
+                      position={[event.latitude, event.longitude]}
+                      icon={stopIcon}
+                    >
+                      <Popup>
+                        <div className="text-sm">
+                          <div className="font-semibold text-amber-600">Parada</div>
+                          <div>Duração: {event.duration ? formatDuration(event.duration) : "N/A"}</div>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {event.address || "Endereço não disponível"}
+                          </div>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ))}
+                </>
+              ) : (
+                <>
+                  {routePositions.length > 1 && (
+                    <Polyline
+                      positions={samplePositions(routePositions)}
+                      pathOptions={{
+                        color: "#3b82f6",
+                        weight: 4,
+                        opacity: 0.8,
+                      }}
+                    />
+                  )}
+                  {routePositions.length > 0 && (
+                    <>
+                      <Marker position={routePositions[0]} icon={startIcon}>
+                        <Popup>
+                          <div className="text-sm">
+                            <div className="font-semibold text-green-600">Partida</div>
+                            <div>{selectedTrip?.startTime ? format(new Date(selectedTrip.startTime), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "N/A"}</div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                      <Marker position={routePositions[routePositions.length - 1]} icon={endIcon}>
+                        <Popup>
+                          <div className="text-sm">
+                            <div className="font-semibold text-red-600">Chegada</div>
+                            <div>{selectedTrip?.endTime ? format(new Date(selectedTrip.endTime), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "N/A"}</div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    </>
+                  )}
+                  {(selectedTrip?.events || [])
+                    .filter(e => e.type === "stop")
+                    .map((event, index) => (
+                      <Marker
+                        key={event.id}
+                        position={[event.latitude, event.longitude]}
+                        icon={stopIcon}
+                      >
+                        <Popup>
+                          <div className="text-sm">
+                            <div className="font-semibold text-amber-600">Parada {index + 1}</div>
+                            <div>Duração: {event.duration ? formatDuration(event.duration) : "N/A"}</div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {event.address || "Endereço não disponível"}
+                            </div>
+                          </div>
+                        </Popup>
+                      </Marker>
+                    ))}
                 </>
               )}
-              
-              {selectedTrip.events
-                .filter(e => e.type === "stop")
-                .map((event, index) => (
-                  <Marker
-                    key={event.id}
-                    position={[event.latitude, event.longitude]}
-                    icon={stopIcon}
-                  >
-                    <Popup>
-                      <div className="text-sm">
-                        <div className="font-semibold text-amber-600">Parada {index + 1}</div>
-                        <div>Duração: {event.duration ? formatDuration(event.duration) : "N/A"}</div>
-                        <div className="text-xs text-muted-foreground mt-1">
-                          {event.address || "Endereço não disponível"}
-                        </div>
-                      </div>
-                    </Popup>
-                  </Marker>
-                ))}
             </MapContainer>
           )}
         </div>
       </div>
 
       <div className="w-[380px] flex-shrink-0 border-l border-border bg-sidebar flex flex-col">
-        {selectedTrip ? (
+        {(isGeneralView ? trips.length > 0 : !!selectedTrip) ? (
           <>
             <div className="p-4 border-b border-sidebar-border">
-              <h2 className="font-semibold text-lg mb-4">Resumo do Trajeto</h2>
+              <h2 className="font-semibold text-lg mb-4">{isGeneralView ? "Resumo Geral" : "Resumo do Trajeto"}</h2>
               <div className="grid grid-cols-2 gap-4">
                 <Card>
                   <CardContent className="p-3">
@@ -393,7 +500,7 @@ export default function History() {
                       Distância
                     </div>
                     <div className="text-xl font-mono font-bold">
-                      {formatDistance(selectedTrip.totalDistance)}
+                      {formatDistance(isGeneralView ? (aggregatedSummary?.totalDistance || 0) : (selectedTrip?.totalDistance || 0))}
                     </div>
                   </CardContent>
                 </Card>
@@ -405,7 +512,7 @@ export default function History() {
                       Tempo
                     </div>
                     <div className="text-xl font-mono font-bold">
-                      {formatDuration(selectedTrip.travelTime)}
+                      {formatDuration(isGeneralView ? (aggregatedSummary?.travelTime || 0) : (selectedTrip?.travelTime || 0))}
                     </div>
                   </CardContent>
                 </Card>
@@ -417,7 +524,7 @@ export default function History() {
                       Parado
                     </div>
                     <div className="text-xl font-mono font-bold">
-                      {formatDuration(selectedTrip.stoppedTime)}
+                      {formatDuration(isGeneralView ? (aggregatedSummary?.stoppedTime || 0) : (selectedTrip?.stoppedTime || 0))}
                     </div>
                   </CardContent>
                 </Card>
@@ -429,7 +536,7 @@ export default function History() {
                       Vel. Média
                     </div>
                     <div className="text-xl font-mono font-bold">
-                      {Math.round(selectedTrip.averageSpeed)} km/h
+                      {Math.round(isGeneralView ? (aggregatedSummary?.averageSpeed || 0) : (selectedTrip?.averageSpeed || 0))} km/h
                     </div>
                   </CardContent>
                 </Card>
@@ -441,7 +548,7 @@ export default function History() {
                       Vel. Máx
                     </div>
                     <div className="text-xl font-mono font-bold">
-                      {Math.round(selectedTrip.maxSpeed)} km/h
+                      {Math.round(isGeneralView ? (aggregatedSummary?.maxSpeed || 0) : (selectedTrip?.maxSpeed || 0))} km/h
                     </div>
                   </CardContent>
                 </Card>
@@ -453,7 +560,7 @@ export default function History() {
                       Paradas
                     </div>
                     <div className="text-xl font-mono font-bold">
-                      {selectedTrip.stopsCount}
+                      {isGeneralView ? (aggregatedSummary?.stopsCount || 0) : (selectedTrip?.stopsCount || 0)}
                     </div>
                   </CardContent>
                 </Card>
@@ -505,13 +612,12 @@ export default function History() {
                 )}
               </div>
 
-              {/* Eventos do Trajeto */}
               <div className="px-4 py-3 border-b border-sidebar-border">
-                <h3 className="font-medium">Eventos do Trajeto</h3>
+                <h3 className="font-medium">{isGeneralView ? "Eventos da Frota" : "Eventos do Trajeto"}</h3>
               </div>
               <ScrollArea className="flex-1">
                 <div className="p-4 space-y-2">
-                  {selectedTrip.events.map(event => (
+                  {(isGeneralView ? (aggregatedSummary?.events || []) : (selectedTrip?.events || [])).map(event => (
                     <button
                       key={event.id}
                       onClick={() => setSelectedEvent(event)}

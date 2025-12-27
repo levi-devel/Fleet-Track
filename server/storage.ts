@@ -740,7 +740,7 @@ export class SupabaseStorage implements IStorage {
       if (data.distance > maxDistance) {
         maxDistance = data.distance;
         const avgSpeed = data.speeds.length > 0
-          ? data.speeds.reduce((a, b) => a + b, 0) / data.speeds.length
+          ? data.speeds.reduce((a: number, b: number) => a + b, 0) / data.speeds.length
           : 0;
         mostActiveVehicle = {
           id,

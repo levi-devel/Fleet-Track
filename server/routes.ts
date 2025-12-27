@@ -272,15 +272,19 @@ export async function registerRoutes(
   app.get("/api/trips", async (req, res) => {
     try {
       const { vehicleId, startDate, endDate } = req.query;
-      
-      if (!vehicleId || typeof vehicleId !== "string") {
-        return res.status(400).json({ error: "Vehicle ID is required" });
-      }
-      
       const start = startDate ? String(startDate) : new Date().toISOString();
       const end = endDate ? String(endDate) : new Date().toISOString();
       
-      const trips = await storage.getTrips(vehicleId, start, end);
+      if (!vehicleId || typeof vehicleId !== "string" || vehicleId === "all") {
+        const allVehicles = await storage.getVehicles();
+        const tripsByVehicle = await Promise.all(
+          allVehicles.map(v => storage.getTrips(v.id, start, end))
+        );
+        const flattened = tripsByVehicle.flat();
+        return res.json(flattened);
+      }
+      
+      const trips = await storage.getTrips(String(vehicleId), start, end);
       res.json(trips);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch trips" });
