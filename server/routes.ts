@@ -2,61 +2,26 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { storage } from "./storage";
-import { insertVehicleSchema, insertGeofenceSchema, insertAlertSchema, trackingDataSchema } from "@shared/schema";
+import {
+  insertVehicleSchema,
+  insertGeofenceSchema,
+  insertAlertSchema,
+  trackingDataSchema,
+} from "@shared/schema";
 
 const clients = new Set<WebSocket>();
 
 function broadcastVehicles(vehicles: unknown[]) {
   const message = JSON.stringify({ type: "vehicles", data: vehicles });
-  
-  clients.forEach(client => {
+
+  clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(message);
     }
   });
 }
 
-export async function registerRoutes(
-  httpServer: Server,
-  app: Express
-): Promise<Server> {
-
-  // Só inicia WebSocket se Supabase NÃO estiver configurado
-  // Quando Supabase está configurado, usamos Supabase Realtime no frontend
-  const useSupabaseRealtime = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY;
-  
-  if (!useSupabaseRealtime) {
-    const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
-
-    // Só registra callback se storage for MemStorage (tem método onVehicleUpdate)
-    if ('onVehicleUpdate' in storage) {
-      (storage as any).onVehicleUpdate(broadcastVehicles);
-    }
-
-    wss.on("connection", (ws) => {
-      clients.add(ws);
-      console.log("WebSocket client connected");
-
-      storage.getVehicles().then(vehicles => {
-        ws.send(JSON.stringify({ type: "vehicles", data: vehicles }));
-      });
-
-      ws.on("close", () => {
-        clients.delete(ws);
-        console.log("WebSocket client disconnected");
-      });
-
-      ws.on("error", (error) => {
-        console.error("WebSocket error:", error);
-        clients.delete(ws);
-      });
-    });
-    
-    console.log("WebSocket server started (Supabase not configured)");
-  } else {
-    console.log("Using Supabase Realtime (WebSocket disabled)");
-  }
-
+export function registerApiRoutes(app: Express): void {
   app.get("/api/vehicles", async (req, res) => {
     try {
       const vehicles = await storage.getVehicles();
@@ -346,6 +311,47 @@ export async function registerRoutes(
       res.status(500).json({ error: "Failed to fetch fleet stats" });
     }
   });
+}
+
+export async function registerRoutes(
+  httpServer: Server,
+  app: Express,
+): Promise<Server> {
+  const useSupabaseRealtime =
+    process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!useSupabaseRealtime) {
+    const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+
+    if ("onVehicleUpdate" in storage) {
+      (storage as any).onVehicleUpdate(broadcastVehicles);
+    }
+
+    wss.on("connection", (ws) => {
+      clients.add(ws);
+      console.log("WebSocket client connected");
+
+      storage.getVehicles().then((vehicles) => {
+        ws.send(JSON.stringify({ type: "vehicles", data: vehicles }));
+      });
+
+      ws.on("close", () => {
+        clients.delete(ws);
+        console.log("WebSocket client disconnected");
+      });
+
+      ws.on("error", (error) => {
+        console.error("WebSocket error:", error);
+        clients.delete(ws);
+      });
+    });
+
+    console.log("WebSocket server started (Supabase not configured)");
+  } else {
+    console.log("Using Supabase Realtime (WebSocket disabled)");
+  }
+
+  registerApiRoutes(app);
 
   return httpServer;
 }
