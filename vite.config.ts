@@ -30,39 +30,6 @@ export default defineConfig({
   build: {
     outDir: path.resolve(import.meta.dirname, "dist/public"),
     emptyOutDir: true,
-    rollupOptions: {
-      output: {
-        manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('react') || id.includes('react-dom') || id.includes('wouter')) {
-              return 'vendor-react';
-            }
-            if (id.includes('@radix-ui') || id.includes('lucide-react')) {
-              return 'vendor-ui';
-            }
-            if (id.includes('leaflet') || id.includes('react-leaflet')) {
-              return 'vendor-maps';
-            }
-            if (id.includes('recharts')) {
-              return 'vendor-charts';
-            }
-            if (id.includes('jspdf') || id.includes('jspdf-autotable')) {
-              return 'vendor-jspdf';
-            }
-            if (id.includes('html2canvas')) {
-              return 'vendor-html2canvas';
-            }
-            if (id.includes('framer-motion')) {
-              return 'vendor-framer';
-            }
-            if (id.includes('@tanstack') || id.includes('date-fns')) {
-              return 'vendor-utils';
-            }
-            return 'vendor';
-          }
-        }
-      }
-    }
   },
   server: {
     fs: {
