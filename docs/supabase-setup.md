@@ -66,6 +66,15 @@ TRACKING_API_KEY=uma-chave-secreta-de-32-caracteres
 
 Substitua todos os placeholders (`[SENHA]`, `[PROJECT_REF]`, etc.) pelos valores reais exibidos em **Project Settings > API**.
 
+### 4.1 Variáveis para o front-end (Vite / Vercel)
+
+O pacote cliente é servido pelo Vite e depende de variáveis prefixadas com `VITE_` para serem embutidas no build. Quando você implantá-lo em provedores como a Vercel, crie também os seguintes pares:
+
+- `VITE_SUPABASE_URL` deve receber o mesmo valor de `SUPABASE_URL`.
+- `VITE_SUPABASE_ANON_KEY` deve receber o valor do `SUPABASE_ANON_KEY`.
+
+No painel da Vercel vá em **Project Settings > Environment Variables** e adicione essas variáveis para os ambientes `Preview` e `Production`. Elas somente são lidas durante a fase de build, então qualquer alteração exige um novo deploy. Sem elas, o frontend não consegue abrir sessão com o Supabase e nenhum dado aparece.
+
 ## 5. Validar a conexão e testar endpoints
 
 1. Execute `npm run dev`.

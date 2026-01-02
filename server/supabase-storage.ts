@@ -4,7 +4,7 @@ import type {
   Geofence, InsertGeofence,
   Alert, InsertAlert,
   Trip, SpeedViolation, VehicleStats,
-  LocationPoint, RouteEvent
+  LocationPoint, RouteEvent, FleetStats
 } from '@shared/schema';
 import type { IStorage } from './storage';
 
@@ -452,4 +452,128 @@ export class SupabaseStorage implements IStorage {
       topViolators,
     };
   }
+
+  async getFleetStats(startDate: string, endDate: string): Promise<FleetStats> {
+    const { data: vehicles, error: vehiclesError } = await supabaseAdmin
+      .from('vehicles')
+      .select('id, name');
+
+    if (vehiclesError) {
+      throw vehiclesError;
+    }
+
+    const allVehicles = vehicles || [];
+    const totalVehicles = allVehicles.length;
+
+    const { data: historyData, error: historyError } = await supabaseAdmin
+      .from('vehicle_location_history')
+      .select('vehicle_id, latitude, longitude, speed, recorded_at')
+      .gte('recorded_at', startDate)
+      .lte('recorded_at', endDate);
+
+    if (historyError) {
+      throw historyError;
+    }
+
+    if (!historyData || historyData.length === 0) {
+      return {
+        totalVehicles,
+        averageSpeed: 0,
+        totalDistance: 0,
+        mostActiveVehicle: null,
+      };
+    }
+
+    const speeds = historyData.map((h) => h.speed as number);
+    const averageSpeed =
+      speeds.reduce((a, b) => a + b, 0) / speeds.length;
+
+    const vehicleDistances = new Map<string, { name: string; distance: number; speeds: number[] }>();
+
+    for (const vehicle of allVehicles) {
+      const vehicleHistory = historyData
+        .filter((h) => h.vehicle_id === vehicle.id)
+        .sort(
+          (a, b) =>
+            new Date(a.recorded_at as string).getTime() -
+            new Date(b.recorded_at as string).getTime(),
+        );
+
+      if (vehicleHistory.length > 0) {
+        let distance = 0;
+        const vehicleSpeeds: number[] = [];
+
+        for (let i = 1; i < vehicleHistory.length; i++) {
+          distance += calculateDistance(
+            vehicleHistory[i - 1].latitude as number,
+            vehicleHistory[i - 1].longitude as number,
+            vehicleHistory[i].latitude as number,
+            vehicleHistory[i].longitude as number,
+          );
+          vehicleSpeeds.push(vehicleHistory[i].speed as number);
+        }
+
+        vehicleDistances.set(vehicle.id as string, {
+          name: vehicle.name as string,
+          distance,
+          speeds: vehicleSpeeds,
+        });
+      }
+    }
+
+    let mostActiveVehicle = null as FleetStats['mostActiveVehicle'];
+    let maxDistance = 0;
+
+    for (const [id, data] of vehicleDistances.entries()) {
+      if (data.distance > maxDistance) {
+        maxDistance = data.distance;
+        const avgSpeed =
+          data.speeds.length > 0
+            ? data.speeds.reduce((a, b) => a + b, 0) /
+              data.speeds.length
+            : 0;
+        mostActiveVehicle = {
+          id,
+          name: data.name,
+          distance: Math.round(data.distance),
+          avgSpeed: Math.round(avgSpeed),
+        };
+      }
+    }
+
+    const totalDistance = Array.from(vehicleDistances.values()).reduce(
+      (sum, v) => sum + v.distance,
+      0,
+    );
+
+    return {
+      totalVehicles,
+      averageSpeed: Math.round(averageSpeed),
+      totalDistance: Math.round(totalDistance),
+      mostActiveVehicle,
+    };
+  }
+
+  onVehicleUpdate(_callback: (vehicles: Vehicle[]) => void): () => void {
+    return () => {};
+  }
+}
+
+function calculateDistance(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number,
+): number {
+  const R = 6371000;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }
