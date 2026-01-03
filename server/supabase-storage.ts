@@ -206,7 +206,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('vehicles')
-      .update(row)
+      .update(row as Record<string, unknown>)
       .eq('id', id)
       .select()
       .single();
@@ -272,7 +272,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('geofences')
-      .update(row)
+      .update(row as Record<string, unknown>)
       .eq('id', id)
       .select()
       .single();
@@ -338,7 +338,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('alerts')
-      .update(row)
+      .update(row as Record<string, unknown>)
       .eq('id', id)
       .select()
       .single();
@@ -353,7 +353,7 @@ export class SupabaseStorage implements IStorage {
   async markAllAlertsRead(): Promise<void> {
     const { error } = await supabaseAdmin
       .from('alerts')
-      .update({ read: true })
+      .update({ read: true } as Record<string, unknown>)
       .eq('read', false);
     
     if (error) throw error;

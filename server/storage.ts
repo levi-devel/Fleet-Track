@@ -123,7 +123,7 @@ export class SupabaseStorage implements IStorage {
     return result[0] ? this.mapVehicleFromDb(result[0]) : undefined;
   }
 
-  async getVehicleByPlate(licensePlate: string): Promise<Vehicle | undefined> {
+  async getVehicleByLicensePlate(licensePlate: string): Promise<Vehicle | undefined> {
     const result = await this.db.select().from(vehicles).where(eq(vehicles.licensePlate, licensePlate));
     return result[0] ? this.mapVehicleFromDb(result[0]) : undefined;
   }

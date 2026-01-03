@@ -133,11 +133,13 @@ export function registerAuthRoutes(app: Express): void {
         .eq('id', userId)
         .single();
       
+      const profileData = profile as { username: string } | null;
+      
       res.json({
         user: {
           id: userId,
           email: req.user?.email,
-          username: profile?.username,
+          username: profileData?.username,
         },
       });
     } catch (error) {
