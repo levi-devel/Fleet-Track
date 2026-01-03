@@ -5,8 +5,8 @@
   "installCommand": "npm install --include=dev",
   "framework": null,
   "functions": {
-    "api/**/*.ts": {
-      "includeFiles": "server/**/*,shared/**/*"
+    "api/[...path].ts": {
+      "includeFiles": ["server/**", "shared/**"]
     }
   },
   "rewrites": [
