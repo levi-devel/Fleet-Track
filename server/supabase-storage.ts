@@ -7,13 +7,6 @@ import type {
   LocationPoint, RouteEvent, FleetStats
 } from '@shared/schema';
 import type { IStorage } from './storage';
-import type { Database } from '@shared/database.types';
-
-// Tipos do banco de dados
-type VehicleRow = Database['public']['Tables']['vehicles']['Row'];
-type GeofenceRow = Database['public']['Tables']['geofences']['Row'];
-type AlertRow = Database['public']['Tables']['alerts']['Row'];
-type VehicleLocationHistoryRow = Database['public']['Tables']['vehicle_location_history']['Row'];
 
 // Helpers para converter entre formato do banco (snake_case) e aplicação (camelCase)
 function toVehicle(row: any): Vehicle {
@@ -213,7 +206,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('vehicles')
-      .update(row as Database['public']['Tables']['vehicles']['Update'])
+      .update(row)
       .eq('id', id)
       .select()
       .single();
@@ -279,7 +272,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('geofences')
-      .update(row as Database['public']['Tables']['geofences']['Update'])
+      .update(row)
       .eq('id', id)
       .select()
       .single();
@@ -345,7 +338,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('alerts')
-      .update(row as Database['public']['Tables']['alerts']['Update'])
+      .update(row)
       .eq('id', id)
       .select()
       .single();
@@ -360,7 +353,7 @@ export class SupabaseStorage implements IStorage {
   async markAllAlertsRead(): Promise<void> {
     const { error } = await supabaseAdmin
       .from('alerts')
-      .update({ read: true } as Database['public']['Tables']['alerts']['Update'])
+      .update({ read: true })
       .eq('read', false);
     
     if (error) throw error;

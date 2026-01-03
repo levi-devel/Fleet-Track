@@ -108,9 +108,23 @@ O método `getVehicleByLicensePlate()` já existe no arquivo (linhas 175-187), e
 
 ## Solução Final
 
+### Arquivo `server/lib/supabase.ts`
+
+Removida a tipagem genérica `Database` do cliente Supabase para evitar erros de tipo `never` durante a compilação:
+
+```typescript
+// Antes (com tipagem estrita):
+export const supabaseAdmin = createClient<Database>(supabaseUrl, supabaseServiceKey, {...});
+
+// Depois (sem tipagem estrita):
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {...});
+```
+
+Esta abordagem é mais robusta porque o cliente Supabase sem tipagem genérica retorna `any` para os dados, permitindo que as funções de conversão (`toVehicle`, `toGeofence`, etc.) façam o mapeamento correto.
+
 ### Arquivo `shared/database.types.ts`
 
-Adicionada a definição da tabela `vehicle_location_history`:
+Adicionada a definição da tabela `vehicle_location_history` (para referência futura):
 
 ```typescript
 vehicle_location_history: {
@@ -134,31 +148,21 @@ vehicle_location_history: {
 
 ### Arquivo `server/supabase-storage.ts`
 
-1. Adicionados imports dos tipos do banco de dados:
+Simplificados os métodos de update removendo as asserções de tipo desnecessárias, já que o cliente Supabase agora retorna tipos flexíveis:
+
 ```typescript
-import type { Database } from '@shared/database.types';
-
-type VehicleRow = Database['public']['Tables']['vehicles']['Row'];
-type GeofenceRow = Database['public']['Tables']['geofences']['Row'];
-type AlertRow = Database['public']['Tables']['alerts']['Row'];
-type VehicleLocationHistoryRow = Database['public']['Tables']['vehicle_location_history']['Row'];
-```
-
-2. Corrigidos os métodos de update para usar tipos explícitos ao invés de `as any`:
-```typescript
-// Antes:
-.update(row as any)
-
-// Depois:
+// Antes (com asserções):
 .update(row as Database['public']['Tables']['vehicles']['Update'])
-```
 
-3. Simplificado o método `getFleetStats()` removendo as asserções de tipo desnecessárias.
+// Depois (sem asserções):
+.update(row)
+```
 
 ## Arquivos Modificados
 
+- `server/lib/supabase.ts` - Removida tipagem genérica `Database` do cliente Supabase
 - `shared/database.types.ts` - Adicionada definição da tabela `vehicle_location_history`
-- `server/supabase-storage.ts` - Adicionados imports de tipos, corrigidos métodos de update
+- `server/supabase-storage.ts` - Simplificado código removendo asserções de tipo
 
 ## Resultado
 

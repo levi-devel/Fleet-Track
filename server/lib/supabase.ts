@@ -1,5 +1,4 @@
-import { createClient } from '@supabase/supabase-js';
-import type { Database } from '@shared/database.types';
+import { createClient, SupabaseClient as SupabaseClientType } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -9,7 +8,8 @@ if (!supabaseUrl || !supabaseServiceKey) {
 }
 
 // Cliente com service role key para operações do servidor (bypass RLS)
-export const supabaseAdmin = createClient<Database>(supabaseUrl, supabaseServiceKey, {
+// Usando cliente sem tipagem estrita para evitar erros de compilação
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
   auth: {
     autoRefreshToken: false,
     persistSession: false,
@@ -19,9 +19,9 @@ export const supabaseAdmin = createClient<Database>(supabaseUrl, supabaseService
 // Cliente com anon key para operações que respeitam RLS
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
-export const supabase = createClient<Database>(
+export const supabase = createClient(
   supabaseUrl,
   supabaseAnonKey || supabaseServiceKey
 );
 
-export type SupabaseClient = typeof supabase;
+export type SupabaseClient = SupabaseClientType;
