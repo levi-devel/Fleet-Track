@@ -490,14 +490,23 @@ export class SupabaseStorage implements IStorage {
 
     const vehicleDistances = new Map<string, { name: string; distance: number; speeds: number[] }>();
 
+    type HistoryRecord = {
+      vehicle_id: string;
+      latitude: number;
+      longitude: number;
+      speed: number;
+      recorded_at: string;
+    };
+
     for (const vehicle of allVehicles) {
       const vehicleHistory = historyData
-        .filter((h) => h.vehicle_id === vehicle.id)
-        .sort(
-          (a, b) =>
-            new Date(a.recorded_at as string).getTime() -
-            new Date(b.recorded_at as string).getTime(),
-        );
+        .filter((h) => h.vehicle_id === vehicle.id) as HistoryRecord[];
+      
+      vehicleHistory.sort(
+        (a, b) =>
+          new Date(a.recorded_at).getTime() -
+          new Date(b.recorded_at).getTime(),
+      );
 
       if (vehicleHistory.length > 0) {
         let distance = 0;
@@ -505,12 +514,12 @@ export class SupabaseStorage implements IStorage {
 
         for (let i = 1; i < vehicleHistory.length; i++) {
           distance += calculateDistance(
-            vehicleHistory[i - 1].latitude as number,
-            vehicleHistory[i - 1].longitude as number,
-            vehicleHistory[i].latitude as number,
-            vehicleHistory[i].longitude as number,
+            vehicleHistory[i - 1].latitude,
+            vehicleHistory[i - 1].longitude,
+            vehicleHistory[i].latitude,
+            vehicleHistory[i].longitude,
           );
-          vehicleSpeeds.push(vehicleHistory[i].speed as number);
+          vehicleSpeeds.push(vehicleHistory[i].speed);
         }
 
         vehicleDistances.set(vehicle.id as string, {
