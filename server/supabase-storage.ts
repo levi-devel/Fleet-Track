@@ -206,7 +206,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('vehicles')
-      .update(row)
+      .update(row as any)
       .eq('id', id)
       .select()
       .single();
@@ -272,7 +272,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('geofences')
-      .update(row)
+      .update(row as any)
       .eq('id', id)
       .select()
       .single();
@@ -338,7 +338,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('alerts')
-      .update(row)
+      .update(row as any)
       .eq('id', id)
       .select()
       .single();
@@ -353,7 +353,7 @@ export class SupabaseStorage implements IStorage {
   async markAllAlertsRead(): Promise<void> {
     const { error } = await supabaseAdmin
       .from('alerts')
-      .update({ read: true })
+      .update({ read: true } as any)
       .eq('read', false);
     
     if (error) throw error;
@@ -465,6 +465,19 @@ export class SupabaseStorage implements IStorage {
     const allVehicles = vehicles || [];
     const totalVehicles = allVehicles.length;
 
+    type VehicleRecord = {
+      id: string;
+      name: string;
+    };
+
+    type HistoryRecord = {
+      vehicle_id: string;
+      latitude: number;
+      longitude: number;
+      speed: number;
+      recorded_at: string;
+    };
+
     const { data: historyData, error: historyError } = await supabaseAdmin
       .from('vehicle_location_history')
       .select('vehicle_id, latitude, longitude, speed, recorded_at')
@@ -475,7 +488,9 @@ export class SupabaseStorage implements IStorage {
       throw historyError;
     }
 
-    if (!historyData || historyData.length === 0) {
+    const typedHistoryData = (historyData || []) as HistoryRecord[];
+
+    if (typedHistoryData.length === 0) {
       return {
         totalVehicles,
         averageSpeed: 0,
@@ -484,23 +499,16 @@ export class SupabaseStorage implements IStorage {
       };
     }
 
-    const speeds = historyData.map((h) => h.speed as number);
+    const speeds = typedHistoryData.map((h) => h.speed);
     const averageSpeed =
       speeds.reduce((a, b) => a + b, 0) / speeds.length;
 
     const vehicleDistances = new Map<string, { name: string; distance: number; speeds: number[] }>();
+    const typedVehicles = (vehicles || []) as VehicleRecord[];
 
-    type HistoryRecord = {
-      vehicle_id: string;
-      latitude: number;
-      longitude: number;
-      speed: number;
-      recorded_at: string;
-    };
-
-    for (const vehicle of allVehicles) {
-      const vehicleHistory = historyData
-        .filter((h) => h.vehicle_id === vehicle.id) as HistoryRecord[];
+    for (const vehicle of typedVehicles) {
+      const vehicleHistory = typedHistoryData
+        .filter((h) => h.vehicle_id === vehicle.id);
       
       vehicleHistory.sort(
         (a, b) =>
@@ -522,8 +530,8 @@ export class SupabaseStorage implements IStorage {
           vehicleSpeeds.push(vehicleHistory[i].speed);
         }
 
-        vehicleDistances.set(vehicle.id as string, {
-          name: vehicle.name as string,
+        vehicleDistances.set(vehicle.id, {
+          name: vehicle.name,
           distance,
           speeds: vehicleSpeeds,
         });
