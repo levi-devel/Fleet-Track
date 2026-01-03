@@ -7,6 +7,13 @@ import type {
   LocationPoint, RouteEvent, FleetStats
 } from '@shared/schema';
 import type { IStorage } from './storage';
+import type { Database } from '@shared/database.types';
+
+// Tipos do banco de dados
+type VehicleRow = Database['public']['Tables']['vehicles']['Row'];
+type GeofenceRow = Database['public']['Tables']['geofences']['Row'];
+type AlertRow = Database['public']['Tables']['alerts']['Row'];
+type VehicleLocationHistoryRow = Database['public']['Tables']['vehicle_location_history']['Row'];
 
 // Helpers para converter entre formato do banco (snake_case) e aplicação (camelCase)
 function toVehicle(row: any): Vehicle {
@@ -206,7 +213,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('vehicles')
-      .update(row as any)
+      .update(row as Database['public']['Tables']['vehicles']['Update'])
       .eq('id', id)
       .select()
       .single();
@@ -272,7 +279,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('geofences')
-      .update(row as any)
+      .update(row as Database['public']['Tables']['geofences']['Update'])
       .eq('id', id)
       .select()
       .single();
@@ -338,7 +345,7 @@ export class SupabaseStorage implements IStorage {
     
     const { data, error } = await supabaseAdmin
       .from('alerts')
-      .update(row as any)
+      .update(row as Database['public']['Tables']['alerts']['Update'])
       .eq('id', id)
       .select()
       .single();
@@ -353,7 +360,7 @@ export class SupabaseStorage implements IStorage {
   async markAllAlertsRead(): Promise<void> {
     const { error } = await supabaseAdmin
       .from('alerts')
-      .update({ read: true } as any)
+      .update({ read: true } as Database['public']['Tables']['alerts']['Update'])
       .eq('read', false);
     
     if (error) throw error;
@@ -465,19 +472,6 @@ export class SupabaseStorage implements IStorage {
     const allVehicles = vehicles || [];
     const totalVehicles = allVehicles.length;
 
-    type VehicleRecord = {
-      id: string;
-      name: string;
-    };
-
-    type HistoryRecord = {
-      vehicle_id: string;
-      latitude: number;
-      longitude: number;
-      speed: number;
-      recorded_at: string;
-    };
-
     const { data: historyData, error: historyError } = await supabaseAdmin
       .from('vehicle_location_history')
       .select('vehicle_id, latitude, longitude, speed, recorded_at')
@@ -488,9 +482,9 @@ export class SupabaseStorage implements IStorage {
       throw historyError;
     }
 
-    const typedHistoryData = (historyData || []) as HistoryRecord[];
+    const historyList = historyData || [];
 
-    if (typedHistoryData.length === 0) {
+    if (historyList.length === 0) {
       return {
         totalVehicles,
         averageSpeed: 0,
@@ -499,22 +493,21 @@ export class SupabaseStorage implements IStorage {
       };
     }
 
-    const speeds = typedHistoryData.map((h) => h.speed);
+    const speeds = historyList.map((h) => h.speed);
     const averageSpeed =
       speeds.reduce((a, b) => a + b, 0) / speeds.length;
 
     const vehicleDistances = new Map<string, { name: string; distance: number; speeds: number[] }>();
-    const typedVehicles = (vehicles || []) as VehicleRecord[];
+    const vehicleList = vehicles || [];
 
-    for (const vehicle of typedVehicles) {
-      const vehicleHistory = typedHistoryData
-        .filter((h) => h.vehicle_id === vehicle.id);
-      
-      vehicleHistory.sort(
-        (a, b) =>
-          new Date(a.recorded_at).getTime() -
-          new Date(b.recorded_at).getTime(),
-      );
+    for (const vehicle of vehicleList) {
+      const vehicleHistory = historyList
+        .filter((h) => h.vehicle_id === vehicle.id)
+        .sort(
+          (a, b) =>
+            new Date(a.recorded_at).getTime() -
+            new Date(b.recorded_at).getTime(),
+        );
 
       if (vehicleHistory.length > 0) {
         let distance = 0;

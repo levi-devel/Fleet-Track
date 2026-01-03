@@ -2,6 +2,10 @@
 
 **Data:** 03/01/2025
 
+## Causa Raiz Identificada
+
+A tabela `vehicle_location_history` **não estava definida** no arquivo de tipos do Supabase (`shared/database.types.ts`). Isso fazia com que o TypeScript inferisse o tipo `never` para qualquer query nessa tabela, causando todos os erros de compilação.
+
 ## Problema
 
 O Vercel estava reportando múltiplos erros TypeScript no arquivo `server/supabase-storage.ts`. Os erros incluíam:
@@ -102,7 +106,61 @@ Adicionadas asserções de tipo `as any` nos métodos `.update()` do Supabase pa
 
 O método `getVehicleByLicensePlate()` já existe no arquivo (linhas 175-187), então o erro sobre método faltante provavelmente foi causado por um problema de cache de build do Vercel ou erro transitório durante a compilação.
 
+## Solução Final
+
+### Arquivo `shared/database.types.ts`
+
+Adicionada a definição da tabela `vehicle_location_history`:
+
+```typescript
+vehicle_location_history: {
+  Row: {
+    id: string
+    vehicle_id: string
+    latitude: number
+    longitude: number
+    speed: number
+    heading: number
+    status: 'moving' | 'stopped' | 'idle' | 'offline'
+    ignition: 'on' | 'off'
+    accuracy: number | null
+    recorded_at: string
+    created_at: string
+  }
+  Insert: { ... }
+  Update: { ... }
+}
+```
+
+### Arquivo `server/supabase-storage.ts`
+
+1. Adicionados imports dos tipos do banco de dados:
+```typescript
+import type { Database } from '@shared/database.types';
+
+type VehicleRow = Database['public']['Tables']['vehicles']['Row'];
+type GeofenceRow = Database['public']['Tables']['geofences']['Row'];
+type AlertRow = Database['public']['Tables']['alerts']['Row'];
+type VehicleLocationHistoryRow = Database['public']['Tables']['vehicle_location_history']['Row'];
+```
+
+2. Corrigidos os métodos de update para usar tipos explícitos ao invés de `as any`:
+```typescript
+// Antes:
+.update(row as any)
+
+// Depois:
+.update(row as Database['public']['Tables']['vehicles']['Update'])
+```
+
+3. Simplificado o método `getFleetStats()` removendo as asserções de tipo desnecessárias.
+
+## Arquivos Modificados
+
+- `shared/database.types.ts` - Adicionada definição da tabela `vehicle_location_history`
+- `server/supabase-storage.ts` - Adicionados imports de tipos, corrigidos métodos de update
+
 ## Resultado
 
-Todos os erros TypeScript foram resolvidos e o código agora compila sem erros no Vercel. O comportamento funcional permanece o mesmo, apenas a tipagem foi corrigida. As asserções de tipo `as any` foram usadas de forma estratégica apenas onde o TypeScript não consegue inferir corretamente os tipos do Supabase.
+Todos os erros TypeScript foram resolvidos e o código agora compila sem erros no Vercel. O cliente Supabase agora tem tipagem completa para todas as tabelas do banco de dados.
 

@@ -273,6 +273,47 @@ export interface Database {
           updated_at?: string
         }
       }
+      vehicle_location_history: {
+        Row: {
+          id: string
+          vehicle_id: string
+          latitude: number
+          longitude: number
+          speed: number
+          heading: number
+          status: 'moving' | 'stopped' | 'idle' | 'offline'
+          ignition: 'on' | 'off'
+          accuracy: number | null
+          recorded_at: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          vehicle_id: string
+          latitude: number
+          longitude: number
+          speed: number
+          heading: number
+          status: 'moving' | 'stopped' | 'idle' | 'offline'
+          ignition: 'on' | 'off'
+          accuracy?: number | null
+          recorded_at?: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          vehicle_id?: string
+          latitude?: number
+          longitude?: number
+          speed?: number
+          heading?: number
+          status?: 'moving' | 'stopped' | 'idle' | 'offline'
+          ignition?: 'on' | 'off'
+          accuracy?: number | null
+          recorded_at?: string
+          created_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
