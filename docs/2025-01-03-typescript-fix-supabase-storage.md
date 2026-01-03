@@ -163,6 +163,9 @@ Simplificados os métodos de update removendo as asserções de tipo desnecessá
 - `server/lib/supabase.ts` - Removida tipagem genérica `Database` do cliente Supabase
 - `shared/database.types.ts` - Adicionada definição da tabela `vehicle_location_history`
 - `server/supabase-storage.ts` - Simplificado código removendo asserções de tipo
+- `server/storage.ts` - Renomeado método `getVehicleByPlate` para `getVehicleByLicensePlate`
+- `server/auth-routes.ts` - Adicionado casting explícito para resultado do Supabase
+- `vercel.json` - Adicionada configuração `functions.includeFiles` para incluir diretórios `server/` e `shared/` no bundle das funções serverless
 
 ## Resultado
 
