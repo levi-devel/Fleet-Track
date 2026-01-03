@@ -24,9 +24,18 @@ function broadcastVehicles(vehicles: unknown[]) {
 export function registerApiRoutes(app: Express): void {
   app.get("/api/vehicles", async (req, res) => {
     try {
+      // #region agent log - H3: Verificar retorno da query
+      console.log('[DEBUG H3] Fetching vehicles...');
+      // #endregion
       const vehicles = await storage.getVehicles();
+      // #region agent log - H3: Verificar quantidade de veículos retornados
+      console.log('[DEBUG H3] Vehicles fetched:', { count: vehicles.length, firstVehicle: vehicles[0]?.name });
+      // #endregion
       res.json(vehicles);
     } catch (error) {
+      // #region agent log - H2: Verificar erros
+      console.error('[DEBUG H2] Error fetching vehicles:', error);
+      // #endregion
       res.status(500).json({ error: "Failed to fetch vehicles" });
     }
   });

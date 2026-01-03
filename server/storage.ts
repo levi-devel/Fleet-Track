@@ -1366,14 +1366,24 @@ async function createStorage(): Promise<IStorage> {
   const supabaseUrl = process.env.SUPABASE_URL;
   const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+  // #region agent log - H1: Verificar variáveis de ambiente
+  console.log('[DEBUG H1] Environment check:', { hasSupabaseUrl: !!supabaseUrl, hasSupabaseKey: !!supabaseKey, supabaseUrlPrefix: supabaseUrl?.substring(0, 30) });
+  // #endregion
+
   if (supabaseUrl && supabaseKey) {
     console.log("🚀 Using Supabase storage");
+    // #region agent log - H4: Confirmar uso do SupabaseStorage
+    console.log('[DEBUG H4] Using SupabaseStorage');
+    // #endregion
     // Dynamic import para evitar erro quando Supabase não está configurado
     const { SupabaseStorage } = await import("./supabase-storage");
     return new SupabaseStorage();
   }
 
   console.log("📦 Using in-memory storage (Supabase not configurado)");
+  // #region agent log - H4: Usando MemStorage
+  console.log('[DEBUG H4] Using MemStorage - Supabase not configured');
+  // #endregion
   return new MemStorage();
 }
 

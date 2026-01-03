@@ -149,11 +149,17 @@ function toSpeedViolation(row: any): SpeedViolation {
 export class SupabaseStorage implements IStorage {
   // Vehicles
   async getVehicles(): Promise<Vehicle[]> {
+    // #region agent log - H3: Query Supabase
+    console.log('[DEBUG H3] Querying Supabase vehicles...');
+    // #endregion
     const { data, error } = await supabaseAdmin
       .from('vehicles')
       .select('*')
       .order('name');
     
+    // #region agent log - H2,H3: Verificar resultado
+    console.log('[DEBUG H2,H3] Supabase response:', { hasError: !!error, errorMessage: error?.message, dataCount: data?.length, firstItem: data?.[0]?.name });
+    // #endregion
     if (error) throw error;
     return (data || []).map(toVehicle);
   }
